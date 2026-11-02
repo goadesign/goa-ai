@@ -552,3 +552,143 @@ func TestQABC70ExternalOverride(t *testing.T) {
 		})
 	}
 }
+
+// TestReview24NestedExtend checks inherited fields before prompt validation.
+func TestReview24NestedExtend(t *testing.T) {
+	tests := []struct {
+		name, source string
+		shape        func(goaexpr.UserType)
+	}{
+		{"inline_object", `{{.Nested.Query}}`, func(base goaexpr.UserType) {
+			Attribute("nested", &goaexpr.Object{}, "Nested input", func() { Extend(base) })
+			Required("nested")
+		}},
+		{"array_element", `{{range .Items}}{{.Query}}{{end}}`, func(base goaexpr.UserType) {
+			Attribute("items", ArrayOf(base), "Nested inputs")
+			Required("items")
+		}},
+		{"map_element", `{{range .Items}}{{.Query}}{{end}}`, func(base goaexpr.UserType) {
+			Attribute("items", MapOf(String, base), "Nested inputs")
+			Required("items")
+		}},
+		{"array_inline_element", `{{range .Items}}{{.Query}}{{end}}`, func(base goaexpr.UserType) {
+			Attribute("items", ArrayOf(&goaexpr.Object{}, func() { Extend(base) }), "Nested inputs")
+			Required("items")
+		}},
+		{"map_inline_element", `{{range .Items}}{{.Query}}{{end}}`, func(base goaexpr.UserType) {
+			Attribute("items", MapOf(String, &goaexpr.Object{}, func() { Elem(func() { Extend(base) }) }), "Nested inputs")
+			Required("items")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				base := Type("Base", func() {
+					Attribute("query", String, "Required query", func() { MinLength(2) })
+					Required("query")
+				})
+				derived := Type("Derived", func() { Extend(base) })
+				Service("support", func() {
+					Prompt("main", func() {
+						Template(tt.source)
+						Args(func() { tt.shape(derived) })
+					})
+				})
+			})
+			require.NoError(t, err)
+			require.NotEmpty(t, agentsexpr.Root.Prompts[0].Args)
+		})
+	}
+}
+
+// TestReview24UnionTruth checks the always-true generated union value shape.
+func TestReview24UnionTruth(t *testing.T) {
+	for _, source := range []string{`{{(or .Choice "fallback").Kind}}`, `{{$x := .Choice}}{{if .Choice}}{{else}}{{$x = "fallback"}}{{end}}{{$x.Kind}}`} {
+		t.Run(source, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				Service("support", func() {
+					Prompt("main", func() {
+						Template(source)
+						Args(func() {
+							OneOf("choice", "Selected value", func() { Attribute("text", String, "Text value") })
+							Required("choice")
+						})
+					})
+				})
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestReview24Preservation checks fresh schema shapes and required rejections.
+func TestReview24Preservation(t *testing.T) {
+	tests := []struct {
+		name, source string
+		schema       func()
+		valid        bool
+	}{
+		{"recursive_named", `{{.Root.Child.Child.Label}}`, func() {
+			node := Type("Node", func() {
+				Attribute("label", String, "Label")
+				Attribute("child", "Node", "Child node")
+				Required("label")
+			})
+			Service("support", func() {
+				Prompt("main", func() {
+					Template(`{{.Root.Child.Child.Label}}`)
+					Args(func() { Attribute("root", node, "Root node"); Required("root") })
+				})
+			})
+		}, true},
+		{"nested_reference", `{{.Nested.Query}}`, func() {
+			base := Type("Base", func() { Attribute("query", String, "Query"); Required("query") })
+			Service("support", func() {
+				Prompt("main", func() {
+					Template(`{{.Nested.Query}}`)
+					Args(func() {
+						Attribute("nested", &goaexpr.Object{}, "Nested", func() { Reference(base); Attribute("query") })
+					})
+				})
+			})
+		}, true},
+		{"deep_external_alias", `{{.Payload.Year}}`, func() {
+			inner := Type("Inner", String, func() { Meta("struct:field:type", "time.Time", "time") })
+			middle := Type("Middle", inner)
+			outer := Type("Outer", middle)
+			Service("support", func() {
+				Prompt("main", func() { Template(`{{.Payload.Year}}`); Args(func() { Attribute("payload", outer, "Timestamp") }) })
+			})
+		}, true},
+		{"closed_empty", `{{.Missing}}`, func() {
+			Service("support", func() { Prompt("main", func() { Template(`{{.Missing}}`); Args(func() {}) }) })
+		}, false},
+		{"two_integer_vars", `{{range $i,$v := .Count}}{{$v}}{{end}}`, func() {
+			Service("support", func() {
+				Prompt("main", func() {
+					Template(`{{range $i,$v := .Count}}{{$v}}{{end}}`)
+					Args(func() { Attribute("count", Int64, "Count") })
+				})
+			})
+		}, false},
+		{"nested_bad_field", `{{(index .Items "key").Missing}}`, func() {
+			item := Type("Item", func() { Attribute("label", String, "Label") })
+			Service("support", func() {
+				Prompt("main", func() {
+					Template(`{{(index .Items "key").Missing}}`)
+					Args(func() { Attribute("items", MapOf(String, item), "Items") })
+				})
+			})
+		}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runDSLWithError(t, tt.schema)
+			if tt.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}

@@ -113,6 +113,49 @@ func TestQABC70EvalExtend(t *testing.T) {
 	assert.Contains(t, content, "Query")
 }
 
+// TestReview24EvalNestedExtend checks both the saved input and emitted validator.
+func TestReview24EvalNestedExtend(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		t.Run(map[bool]string{false: "top_level", true: "nested_inline"}[nested], func(t *testing.T) {
+			roots := runDesign(t, func() {
+				base := goadsl.Type("QueryBase", func() {
+					goadsl.Attribute("query", goadsl.String, "Required query", func() { goadsl.MinLength(2) })
+					goadsl.Required("query")
+				})
+				derived := goadsl.Type("QueryDerived", func() { goadsl.Extend(base) })
+				evaldsl.Suite("shape_review", func() {
+					goadsl.Description("Checks query input")
+					goadsl.Timeout("30s")
+					evaldsl.Scenario("query", func() {
+						goadsl.Description("Runs a query")
+						evaldsl.Input(func() {
+							if nested {
+								goadsl.Attribute("nested", &goaexpr.Object{}, "Nested query", func() { goadsl.Extend(derived) })
+								goadsl.Required("nested")
+							} else {
+								goadsl.Extend(derived)
+							}
+						})
+					})
+				})
+			})
+			input := evaluationRootForTest(t, roots).Suites[0].Scenarios[0].Input
+			att := input
+			if nested {
+				att = input.Find("nested")
+			}
+			require.NotNil(t, att)
+			assert.NotNil(t, att.Find("query"), "required inherited field must survive finalization")
+			assert.Contains(t, att.AllRequired(), "query")
+			files := generateEvalFiles(t, roots, false)
+			require.Len(t, files, 1)
+			content := render(t, files[0])
+			assert.Contains(t, content, "Query string")
+			assert.Contains(t, content, "utf8.RuneCountInString")
+		})
+	}
+}
+
 func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 	roots := runDesign(t, func() {
 		shared := goadsl.Type("SharedInput", func() {

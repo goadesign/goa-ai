@@ -10,7 +10,6 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
-	"path"
 	"path/filepath"
 	"sort"
 
@@ -44,7 +43,6 @@ type (
 	// in an agent or service package.
 	promptPackagePlan struct {
 		pkg               *codegen.GeneratedPackage
-		genpkg            string
 		imports           *codegen.GeneratedImportPlan
 		decls             []plannedPromptDeclarations
 		declaredTypes     map[localizedTypeKey]*codegen.TypeDeclaration
@@ -92,13 +90,9 @@ type (
 )
 
 // newPromptPackagePlan initializes prompt package planning for one generated Go package.
-func newPromptPackagePlan(pkg *codegen.GeneratedPackage, genpkg string) *promptPackagePlan {
-	if genpkg == "" {
-		genpkg = "goa.design/goa-ai/gen"
-	}
+func newPromptPackagePlan(pkg *codegen.GeneratedPackage) *promptPackagePlan {
 	return &promptPackagePlan{
 		pkg:           pkg,
-		genpkg:        genpkg,
 		imports:       codegen.NewGeneratedImportPlan(pkg),
 		declaredTypes: make(map[localizedTypeKey]*codegen.TypeDeclaration),
 		unionDecls:    make(map[codegen.UnionDeclarationID]*codegen.UnionDeclaration),
@@ -408,83 +402,6 @@ func (p *promptPackagePlan) declare(prompts []*agentexpr.PromptExpr) error {
 	}
 	for _, localized := range p.allLocalizedTypes {
 		if err := p.imports.AddTypeExpressions(localized.generated.AttributeExpr); err != nil {
-			return err
-		}
-	}
-
-	seenDesignImports := make(map[string]*codegen.ImportSpec)
-	seenGeneratedImports := make(map[string]*codegen.ImportSpec)
-	seenTypes := make(map[string]bool)
-	var collectMetaImports func(att *goaexpr.AttributeExpr)
-	collectMetaImports = func(att *goaexpr.AttributeExpr) {
-		if att == nil || att.Type == nil {
-			return
-		}
-		for _, imp := range codegen.GetMetaTypeImports(att) {
-			if imp != nil && imp.Path != "" && imp.Path != p.pkg.ImportPath() {
-				seenDesignImports[imp.Path] = imp
-			}
-		}
-		if ut, ok := att.Type.(goaexpr.UserType); ok {
-			loc := codegen.UserTypeLocation(ut)
-			if loc != nil {
-				importPath := path.Join(p.genpkg, loc.RelImportPath)
-				if importPath != p.pkg.ImportPath() {
-					seenGeneratedImports[importPath] = &codegen.ImportSpec{
-						Path: importPath,
-						Name: loc.PackageName(),
-					}
-				}
-				return
-			}
-			id := ut.ID()
-			if !seenTypes[id] {
-				seenTypes[id] = true
-				collectMetaImports(ut.Attribute())
-			}
-			return
-		}
-		if obj := goaexpr.AsObject(att.Type); obj != nil {
-			for _, nat := range *obj {
-				if nat != nil {
-					collectMetaImports(nat.Attribute)
-				}
-			}
-			return
-		}
-		if arr := goaexpr.AsArray(att.Type); arr != nil {
-			collectMetaImports(arr.ElemType)
-			return
-		}
-		if mp := goaexpr.AsMap(att.Type); mp != nil {
-			collectMetaImports(mp.KeyType)
-			collectMetaImports(mp.ElemType)
-			return
-		}
-		if un := goaexpr.AsUnion(att.Type); un != nil {
-			for _, nat := range un.Values {
-				if nat != nil {
-					collectMetaImports(nat.Attribute)
-				}
-			}
-			return
-		}
-	}
-	for _, shape := range p.publicShapes {
-		if shape != nil {
-			collectMetaImports(shape)
-		}
-	}
-	for _, localized := range p.allLocalizedTypes {
-		collectMetaImports(localized.generated.AttributeExpr)
-	}
-	for _, imp := range seenDesignImports {
-		if err := p.imports.AddDesign(imp); err != nil {
-			return err
-		}
-	}
-	for _, imp := range seenGeneratedImports {
-		if err := p.imports.AddGenerated(imp); err != nil {
 			return err
 		}
 	}

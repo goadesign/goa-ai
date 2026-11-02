@@ -146,6 +146,9 @@ func (p *PromptExpr) Validate() error {
 	var rootType tmplcheck.Type
 	if hasArgs {
 		rootType = newExprAttrType(p.Args)
+		if rootType != nil {
+			rootType = tmplcheck.WithKnownTruth(rootType, true)
+		}
 	} else {
 		rootType = tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
 	}
@@ -158,39 +161,6 @@ func (p *PromptExpr) Validate() error {
 		return nil
 	}
 	return verr
-}
-
-// newExprAttrType creates a tmplcheck.Type wrapping an attribute expression, returning nil
-// for unconstrained dynamic types (such as Any or struct:field:type overrides).
-func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
-	}
-	curr, dynamic := unwrapAttr(att)
-	if dynamic || curr == nil || curr.Type == nil || curr.Type == goaexpr.Any {
-		return nil
-	}
-	return &exprAttrType{att: att}
-}
-
-// unwrapAttr strips enclosing user types, returning the underlying attribute expression
-// and a boolean indicating whether any encountered user type had a dynamic override.
-func unwrapAttr(att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, bool) {
-	curr := att
-	for curr != nil && curr.Type != nil {
-		if len(curr.Meta["struct:field:type"]) > 0 {
-			return nil, true
-		}
-		if ut, ok := curr.Type.(goaexpr.UserType); ok && ut != goaexpr.Empty {
-			if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
-				return nil, true
-			}
-			curr = ut.Attribute()
-			continue
-		}
-		break
-	}
-	return curr, false
 }
 
 // ID returns the type identity for cycle detection in recursive template invocations.
@@ -314,4 +284,41 @@ func (e *exprAttrType) Range(twoVars bool) (tmplcheck.Type, tmplcheck.Type, erro
 	default:
 		return nil, nil, fmt.Errorf("%w: cannot range over type %s", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
 	}
+}
+
+// newExprAttrType creates a tmplcheck.Type wrapping an attribute expression, returning nil
+// for unconstrained dynamic types (such as Any or struct:field:type overrides).
+func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
+	}
+	curr, dynamic := unwrapAttr(att)
+	if dynamic || curr == nil || curr.Type == nil || curr.Type == goaexpr.Any {
+		return nil
+	}
+	base := &exprAttrType{att: att}
+	if goaexpr.AsUnion(curr.Type) != nil {
+		return tmplcheck.WithKnownTruth(base, true)
+	}
+	return base
+}
+
+// unwrapAttr strips enclosing user types, returning the underlying attribute expression
+// and a boolean indicating whether any encountered user type had a dynamic override.
+func unwrapAttr(att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, bool) {
+	curr := att
+	for curr != nil && curr.Type != nil {
+		if len(curr.Meta["struct:field:type"]) > 0 {
+			return nil, true
+		}
+		if ut, ok := curr.Type.(goaexpr.UserType); ok && ut != goaexpr.Empty {
+			if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
+				return nil, true
+			}
+			curr = ut.Attribute()
+			continue
+		}
+		break
+	}
+	return curr, false
 }

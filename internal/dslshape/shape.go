@@ -99,31 +99,81 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 // If the finalized type is an object with zero fields, Finalize collapses it to
 // goaexpr.Empty.
 func Finalize(att *goaexpr.AttributeExpr) {
-	finalizeVisited(att, make(map[string]bool))
-}
-
-// finalizeVisited tracks visited user types to prevent infinite recursion on
-// self-referential or mutually referential types while finalizing bases and references.
-func finalizeVisited(att *goaexpr.AttributeExpr, visited map[string]bool) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
 	}
-	for _, dt := range append(append([]goaexpr.DataType{}, att.Bases...), att.References...) {
-		if ut, ok := dt.(goaexpr.UserType); ok {
-			if id := ut.ID(); id != "" && !visited[id] {
-				visited[id] = true
-				finalizeVisited(ut.Attribute(), visited)
-			}
-		}
-	}
-	if ut, ok := att.Type.(goaexpr.UserType); ok {
-		if id := ut.ID(); id != "" && !visited[id] {
-			visited[id] = true
-			finalizeVisited(ut.Attribute(), visited)
-		}
-	}
-	att.Finalize()
+	finalizeVisited(att, make(map[string]bool), make(map[*goaexpr.AttributeExpr]bool))
 	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
 		att.Type = goaexpr.Empty
+	}
+}
+
+// finalizeVisited tracks visited user types and attributes to prevent infinite recursion on
+// self-referential or mutually referential types while finalizing bases and references.
+func finalizeVisited(att *goaexpr.AttributeExpr, visitedTypes map[string]bool, visitedAttrs map[*goaexpr.AttributeExpr]bool) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	prepareNestedDependencies(att, visitedTypes, visitedAttrs)
+	att.Finalize()
+}
+
+// prepareNestedDependencies recursively visits an attribute's bases, references,
+// and nested child attributes to ensure all referenced user types and base dependencies
+// are fully finalized before att.Finalize() merges them into their callers.
+func prepareNestedDependencies(att *goaexpr.AttributeExpr, visitedTypes map[string]bool, visitedAttrs map[*goaexpr.AttributeExpr]bool) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty || visitedAttrs[att] {
+		return
+	}
+	visitedAttrs[att] = true
+	for _, dt := range append(append([]goaexpr.DataType{}, att.Bases...), att.References...) {
+		if ut, ok := dt.(goaexpr.UserType); ok {
+			if id := ut.ID(); id != "" && !visitedTypes[id] {
+				visitedTypes[id] = true
+				finalizeVisited(ut.Attribute(), visitedTypes, visitedAttrs)
+			}
+		} else {
+			prepareDataTypeDependencies(dt, visitedTypes, visitedAttrs)
+		}
+	}
+	prepareDataTypeDependencies(att.Type, visitedTypes, visitedAttrs)
+}
+
+// prepareDataTypeDependencies traverses data types for nested user types and attributes.
+func prepareDataTypeDependencies(dt goaexpr.DataType, visitedTypes map[string]bool, visitedAttrs map[*goaexpr.AttributeExpr]bool) {
+	if dt == nil {
+		return
+	}
+	if ut, ok := dt.(goaexpr.UserType); ok {
+		if id := ut.ID(); id != "" && !visitedTypes[id] {
+			visitedTypes[id] = true
+			finalizeVisited(ut.Attribute(), visitedTypes, visitedAttrs)
+		}
+		return
+	}
+	switch actual := dt.(type) {
+	case *goaexpr.Object:
+		for _, nat := range *actual {
+			if nat != nil && nat.Attribute != nil {
+				prepareNestedDependencies(nat.Attribute, visitedTypes, visitedAttrs)
+			}
+		}
+	case *goaexpr.Array:
+		if actual.ElemType != nil {
+			prepareNestedDependencies(actual.ElemType, visitedTypes, visitedAttrs)
+		}
+	case *goaexpr.Map:
+		if actual.KeyType != nil {
+			prepareNestedDependencies(actual.KeyType, visitedTypes, visitedAttrs)
+		}
+		if actual.ElemType != nil {
+			prepareNestedDependencies(actual.ElemType, visitedTypes, visitedAttrs)
+		}
+	case *goaexpr.Union:
+		for _, nat := range actual.Values {
+			if nat != nil && nat.Attribute != nil {
+				prepareNestedDependencies(nat.Attribute, visitedTypes, visitedAttrs)
+			}
+		}
 	}
 }

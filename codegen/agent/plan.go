@@ -218,7 +218,7 @@ func planServicePromptsPackages(generation *goacodegen.Generation, design *agent
 		if err != nil {
 			return nil, fmt.Errorf("claim service %q prompts package: %w", svc.Name, err)
 		}
-		pkgPlan := newPromptPackagePlan(pkg, design.Genpkg)
+		pkgPlan := newPromptPackagePlan(pkg)
 		if err := pkgPlan.declare(prompts); err != nil {
 			return nil, fmt.Errorf("declare service %q prompts: %w", svc.Name, err)
 		}
