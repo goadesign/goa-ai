@@ -287,6 +287,23 @@ func (e *exprAttrType) Range(twoVars bool) (tmplcheck.Type, tmplcheck.Type, erro
 	}
 }
 
+// Slice resolves a built-in slice operation on this attribute type and reports
+// whether a zero-index slice preserves a statically known true fact.
+//
+// Goa always generates ArrayOf(...) and named array UserTypes (without dynamic
+// struct:field:type overrides) as non-pointer Go slices ([]T), whose truthiness
+// is invariant under text/template indirection.
+func (e *exprAttrType) Slice() (tmplcheck.Type, bool) {
+	curr, dynamic := unwrapAttr(e.att)
+	if dynamic || curr == nil || curr.Type == nil || curr.Type == goaexpr.Any {
+		return nil, false
+	}
+	if _, ok := curr.Type.(*goaexpr.Array); ok {
+		return e, true
+	}
+	return e, false
+}
+
 // newExprAttrType creates a tmplcheck.Type wrapping an attribute expression, returning nil
 // for unconstrained dynamic types (such as Any or struct:field:type overrides).
 func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {

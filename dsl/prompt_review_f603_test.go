@@ -2,6 +2,7 @@
 package dsl_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -547,4 +548,73 @@ func TestReviewBeaeNestedReferenceSharedBase(t *testing.T) {
 	query := sharedBase.Attribute().Find("query")
 	require.NotNil(t, query)
 	assert.Nil(t, query.DefaultValue, "SharedBase default must remain nil after full root finalization")
+}
+
+// TestIndependentBA23BackEdge checks value cycles that cross inheritance dependencies.
+func TestIndependentBA23BackEdge(t *testing.T) {
+	for _, kind := range []string{"prompt", "tool", "completion", "goa"} {
+		for _, shape := range []string{"object", "array", "map", "union"} {
+			for _, reverse := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/reverse_%v", kind, shape, reverse), func(t *testing.T) {
+					var node goaexpr.UserType
+					err := runDSLWithError(t, func() {
+						ancestor := Type("Ancestor", func() {
+							Attribute("query", String, "Query", func() { MinLength(2) })
+							Required("query")
+							switch shape {
+							case "object":
+								Attribute("back", "Node", "Back to node")
+							case "array":
+								Attribute("back", ArrayOf("Node"), "Back to nodes")
+							case "map":
+								Attribute("back", MapOf(String, "Node"), "Back to nodes")
+							case "union":
+								OneOf("back", "Back to node", func() { Attribute("node", "Node", "Node branch") })
+							}
+						})
+						base := Type("Base", func() { Extend(ancestor) })
+						derived := Type("Derived", func() { Extend(base) })
+						node = Type("Node", func() {
+							if !reverse {
+								Attribute("self", "Node", "Self")
+							}
+							Attribute("nested", &goaexpr.Object{}, "Nested", func() { Extend(derived) })
+							if reverse {
+								Attribute("self", "Node", "Self")
+							}
+						})
+						if kind == "tool" {
+							Toolset("queries", func() { Tool("query", "Query", func() { Args(node); Return(node) }) })
+							return
+						}
+						Service("support", func() {
+							switch kind {
+							case "prompt":
+								Prompt("main", func() { Template("ok"); Args(node) })
+							case "completion":
+								Completion("query", "Query", func() { Return(node) })
+							case "goa":
+								Method("query", func() { Payload(node); Result(node) })
+							}
+						})
+					})
+					require.NoError(t, err)
+					atts := []*goaexpr.AttributeExpr{node.Attribute()}
+					if kind == "prompt" {
+						atts = append(atts, agentsexpr.Root.Prompts[0].Args)
+					}
+					for _, att := range atts {
+						nested := att.Find("nested")
+						require.NotNil(t, nested)
+						query := nested.Find("query")
+						require.NotNil(t, query, "nested query must survive")
+						assert.Contains(t, nested.AllRequired(), "query")
+						require.NotNil(t, query.Validation)
+						require.NotNil(t, query.Validation.MinLength)
+						assert.Equal(t, 2, *query.Validation.MinLength)
+					}
+				})
+			}
+		}
+	}
 }

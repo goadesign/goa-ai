@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	. "goa.design/goa-ai/dsl"
 	goadsl "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 // TestReviewBeaeEmittedReferenceExtend runs both emitted prompt forms and inspects their published schemas.
@@ -245,6 +247,315 @@ func TestGeneratedOracle(t *testing.T) {
 			cmd.Env = append(os.Environ(), "CI=true", "GOWORK=off")
 			output, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(output))
+		})
+	}
+}
+
+// TestIndependentBA23EmittedBackEdge checks emitted schemas and Go fields across recursive back-edges.
+func TestIndependentBA23EmittedBackEdge(t *testing.T) {
+	for _, kind := range []string{"tool", "completion", "prompt"} {
+		t.Run(kind, func(t *testing.T) {
+			files := testhelpers.BuildAndGenerateWithPkg(t, "review.local/gen", func() {
+				goadsl.API("review", func() {})
+				ancestor := goadsl.Type("Ancestor", func() {
+					goadsl.Attribute("query", goadsl.String, "Query", func() { goadsl.MinLength(2) })
+					goadsl.Required("query")
+					goadsl.Attribute("back", "Node", "Back to node")
+				})
+				base := goadsl.Type("Base", func() { goadsl.Extend(ancestor) })
+				derived := goadsl.Type("Derived", func() { goadsl.Extend(base) })
+				node := goadsl.Type("Node", func() {
+					goadsl.Attribute("self", "Node", "Self")
+					goadsl.Attribute("nested", &goaexpr.Object{}, "Nested", func() { goadsl.Extend(derived) })
+				})
+				if kind == "tool" {
+					tools := Toolset("queries", func() { Tool("query", "Query", func() { Args(node); Return(node) }) })
+					goadsl.Service("support", func() { Agent("bot", "Query bot", func() { Use(tools) }) })
+					return
+				}
+				goadsl.Service("support", func() {
+					if kind == "prompt" {
+						Prompt("main", func() { Template("ok"); Args(node) })
+					} else {
+						Completion("query", "Query", func() { Return(node) })
+					}
+				})
+			})
+			var schemaFound, goFieldFound bool
+			for _, file := range files {
+				if strings.HasSuffix(file.Path, "schemas.json") || strings.Contains(file.Path, "completions") || strings.HasSuffix(file.Path, "types.go") || strings.HasSuffix(file.Path, "prompts.go") {
+					content := testhelpers.FileContent(t, files, file.Path)
+					t.Logf("SNAPSHOT %s\n%s\nEND SNAPSHOT", file.Path, content)
+					if strings.HasSuffix(file.Path, "schemas.json") && regexp.MustCompile(`"query"\s*:`).MatchString(content) {
+						schemaFound = true
+					}
+					if regexp.MustCompile(`\bQuery\s+string\b`).MatchString(content) {
+						goFieldFound = true
+					}
+				}
+			}
+			if kind != "completion" {
+				assert.True(t, schemaFound, "published schema must contain inherited Query")
+			}
+			assert.True(t, goFieldFound, "generated contract must contain inherited Query")
+			if kind == "prompt" {
+				return
+			}
+			dir := t.TempDir()
+			repo, err := filepath.Abs("../..")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module review.local\n\ngo 1.27.3\n\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => "+repo+"\n"), 0600))
+			for _, file := range files {
+				_, err := file.Render(dir)
+				require.NoError(t, err)
+			}
+			packageName, packageDir, decoder := "queries", "gen/support/toolsets/queries", "SpecQuery().Payload.Codec.FromJSON"
+			if kind == "completion" {
+				packageName, packageDir, decoder = "completions", "gen/support/completions", "SpecQuery().Codec.FromJSON"
+			}
+			child := `package ` + packageName + `
+import "testing"
+func TestPreserveInheritedContract(t *testing.T){
+	for _,tc:=range []struct{input string; valid bool}{
+		{"{\"nested\":{}}",false},
+		{"{\"nested\":{\"query\":\"a\"}}",false},
+		{"{\"nested\":{\"query\":\"ab\"}}",true},
+	}{
+		_,err:=` + decoder + `([]byte(tc.input))
+		t.Logf("input=%s err=%v",tc.input,err)
+		if (err==nil)!=tc.valid{t.Errorf("input=%s want valid=%v, err=%v",tc.input,tc.valid,err)}
+	}
+}
+`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, packageDir, "review_test.go"), []byte(child), 0600))
+			ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1", "-timeout=25s", "-v", "./"+packageDir+"/...")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "CI=true", "GOWORK=off")
+			output, err := cmd.CombinedOutput()
+			t.Log(string(output))
+			assert.NoError(t, err)
+		})
+	}
+}
+
+// TestIndependentBa23GeneratedContracts validates prompt template execution across generated types,
+// ensuring slice and map operations preserve static truthiness contracts.
+func TestIndependentBa23GeneratedContracts(t *testing.T) {
+	forms := []string{
+		`{{$x := .Item}}{{$v := or OPERAND "fallback"}}{{if slice $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`,
+		`{{$x := .Item}}{{$v := or OPERAND "fallback"}}{{if $v | slice}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`,
+		`{{$x := .Item}}{{$v := or OPERAND "fallback"}}{{range 2}}{{$v = slice $v}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`,
+		`{{define "n"}}{{$x := .Item}}{{$v := or OPERAND "fallback"}}{{if slice $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "n" .}}`,
+	}
+	modes := []string{
+		"optional", "required", "defaulted",
+		"named_optional", "named_required", "named_defaulted",
+		"array", "named_array", "bytes", "map",
+		"inherited_optional", "inherited_defaulted", "referenced_defaulted",
+	}
+	design := func(mode, source string) func() {
+		return func() {
+			goadsl.API("independent", func() {})
+			item := goadsl.Type("Item", func() {
+				goadsl.Attribute("label", goadsl.String, "Readable label")
+				goadsl.Required("label")
+			})
+			namedString := goadsl.Type("Text", goadsl.String)
+			namedArray := goadsl.Type("Texts", goadsl.ArrayOf(goadsl.String))
+			base := goadsl.Type("Base", func() {
+				goadsl.Attribute("operand", goadsl.String, "Inherited operand", func() {
+					if strings.Contains(mode, "defaulted") {
+						goadsl.Default("alpha")
+					}
+				})
+			})
+			goadsl.Service("review", func() {
+				Agent("bot", "Review", func() {
+					Prompt("triage", func() {
+						Template(source)
+						Args(func() {
+							goadsl.Attribute("item", item, "Label source")
+							goadsl.Required("item")
+							switch mode {
+							case "array":
+								goadsl.Attribute("operand", goadsl.ArrayOf(goadsl.String), "Slice operand")
+							case "named_array":
+								goadsl.Attribute("operand", namedArray, "Named slice operand")
+							case "bytes":
+								goadsl.Attribute("operand", goadsl.Bytes, "Bytes operand")
+							case "map":
+								goadsl.Attribute("operand", goadsl.MapOf(goadsl.String, goadsl.String), "Map operand")
+							case "inherited_optional", "inherited_defaulted":
+								goadsl.Extend(base)
+							case "referenced_defaulted":
+								goadsl.Reference(base)
+								goadsl.Attribute("operand")
+							default:
+								var typ goaexpr.DataType = goadsl.String
+								if strings.HasPrefix(mode, "named_") {
+									typ = namedString
+								}
+								goadsl.Attribute("operand", typ, "String operand", func() {
+									if strings.Contains(mode, "defaulted") {
+										goadsl.Default("alpha")
+									}
+								})
+								if strings.Contains(mode, "required") {
+									goadsl.Required("operand")
+								}
+							}
+						})
+					})
+				})
+			})
+		}
+	}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			valid := !strings.Contains(mode, "optional")
+			for i, form := range forms {
+				operand := ".Operand"
+				if mode == "map" {
+					operand = `(index .Operand "key")`
+				}
+				src := strings.ReplaceAll(form, "OPERAND", operand)
+				testhelpers.SetupEvalRoots(t)
+				require.True(t, eval.Execute(design(mode, src), nil), eval.Context.Error())
+				compileErr := eval.RunDSL()
+				t.Logf("DSL form=%d expectedValid=%t error=%v", i, valid, compileErr)
+				if (compileErr == nil) != valid {
+					t.Errorf("DSL/Go field disagreement mode=%s form=%d valid=%t error=%v", mode, i, valid, compileErr)
+				}
+			}
+			files := testhelpers.BuildAndGenerateWithPkg(t, "independent.local/gen", design(mode, "ok"))
+			dir := t.TempDir()
+			for _, f := range files {
+				_, err := f.Render(dir)
+				require.NoError(t, err)
+			}
+			repo, err := filepath.Abs("../..")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module independent.local\n\ngo 1.27.3\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => "+repo+"\n"), 0600))
+			generated, err := os.ReadFile(filepath.Join(dir, "gen/review/agents/bot/prompts.go")) //nolint:gosec // Read emitted test fixture.
+			require.NoError(t, err)
+			t.Logf("actual generated package mode=%s:\n%s", mode, generated)
+			sources := make([]string, 0, len(forms))
+			for _, form := range forms {
+				operand := ".Operand"
+				if mode == "map" {
+					operand = `(index .Operand "key")`
+				}
+				sources = append(sources, fmt.Sprintf("%q", strings.ReplaceAll(form, "OPERAND", operand)))
+			}
+			child := fmt.Sprintf(`package bot_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"reflect"
+	"testing"
+	"text/template"
+
+	gen "independent.local/gen/review/agents/bot"
+	"goa.design/goa-ai/runtime/agent/prompt"
+)
+
+func TestGeneratedContract(t *testing.T) {
+	valid := %t
+	mode := %q
+	spec := gen.PromptSpecTriage()
+	v := reflect.New(spec.ArgsType).Elem()
+	item := v.FieldByName("Item")
+	item.Set(reflect.New(item.Type().Elem()))
+	item.Elem().FieldByName("Label").SetString("alpha")
+	operand := v.FieldByName("Operand")
+	t.Logf("actual field type=%%s ArgsType=%%s", operand.Type(), spec.ArgsType)
+	switch operand.Kind() {
+	case reflect.Pointer:
+		operand.Set(reflect.New(operand.Type().Elem()))
+		operand.Elem().SetString("")
+	case reflect.String:
+		operand.SetString("alpha")
+	case reflect.Slice:
+		operand.Set(reflect.MakeSlice(operand.Type(), 1, 1))
+		if operand.Type().Elem().Kind() == reflect.Uint8 {
+			operand.Index(0).SetUint(65)
+		} else {
+			operand.Index(0).SetString("alpha")
+		}
+	case reflect.Map:
+		operand.Set(reflect.MakeMap(operand.Type()))
+		operand.SetMapIndex(reflect.ValueOf("key"), reflect.ValueOf("alpha"))
+	default:
+		t.Fatalf("unexpected operand %%s in %%s", operand.Type(), mode)
+	}
+	args := v.Interface()
+	if reflect.TypeOf(args) != spec.ArgsType {
+		t.Fatal("ArgsType mismatch")
+	}
+	for i, src := range []string{%s} {
+		t.Run(string(rune('a'+i)), func(t *testing.T) {
+			var output bytes.Buffer
+			oracle := template.Must(template.New("oracle").Parse(src)).Execute(&output, args)
+			t.Logf("oracle error=%%v output=%%q", oracle, output.String())
+			if (oracle == nil) != valid {
+				t.Fatalf("oracle validity mismatch %%v", oracle)
+			}
+			calls := 0
+			spec.Template = "{{witness}}" + src
+			spec.Funcs = template.FuncMap{"witness": func() string { calls++; return "" }}
+			store := prompt.NewInMemoryStore()
+			reg := prompt.NewRegistry(store)
+			base := spec
+			base.Template = "base"
+			if e := reg.Register(base); e != nil {
+				t.Fatal(e)
+			}
+			entries := []error{
+				prompt.ValidatePromptTemplate(spec, spec.Template),
+				prompt.NewRegistry(nil).Register(spec),
+				prompt.NewRegistry(nil).ValidateSpecs([]prompt.PromptSpec{spec}),
+				reg.ValidateOverride(spec.ID, spec.Template),
+				reg.SetOverride(context.Background(), spec.ID, prompt.Scope{}, spec.Template, nil),
+			}
+			for j, e := range entries {
+				if (valid && e != nil) || (!valid && !errors.Is(e, prompt.ErrTemplateFieldNotFound)) {
+					t.Errorf("entry %%d=%%v", j, e)
+				}
+			}
+			if calls != 0 {
+				t.Fatal("validation called witness")
+			}
+			if e := store.Set(context.Background(), spec.ID, prompt.Scope{}, spec.Template, nil); e != nil {
+				t.Fatal(e)
+			}
+			out, e := reg.Render(context.Background(), spec.ID, prompt.Scope{}, args)
+			t.Logf("entries=%%v raw render=%%v out=%%v witness=%%d", entries, e, out, calls)
+			if valid {
+				if e != nil || out.Text != "alpha" || calls != 1 {
+					t.Fatal("valid render failed", e, out, calls)
+				}
+			} else {
+				if !errors.Is(e, prompt.ErrTemplateFieldNotFound) || calls != 0 {
+					t.Fatal("invalid render reached witness", e, calls)
+				}
+			}
+		})
+	}
+}
+`, valid, mode, strings.Join(sources, ", "))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "gen/review/agents/bot/independent_test.go"), []byte(child), 0600))
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1", "-timeout=20s", "-v", "./...")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "CI=true", "GOWORK=off")
+			out, err := cmd.CombinedOutput()
+			t.Logf("complete generated module result:\n%s", out)
+			require.NoError(t, err)
 		})
 	}
 }
