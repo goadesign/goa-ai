@@ -17,6 +17,7 @@ Goa design
     → service types, validation, and transport contracts
     → tool schemas, codecs, and registration
     → agent and completion clients
+    → composable prompt templates, typed renderers, and schema catalogs
     → MCP clients and HTTP servers
 
 Application behavior + generated contracts
@@ -71,10 +72,14 @@ establish that it is safe to execute again.
 
 Policies restrict permitted tools, call and recovery budgets, and time. History
 policies retain complete turns or request summaries; prompt caching and overrides
-configure model inputs. Runtime code owns correlation, pagination continuation,
-accepted tool identity, and valid execution transitions.
+configure model inputs. Planners render composable prompt templates with typed
+arguments and sub-prompt composition, carrying exact prompt version references into
+model requests and OpenTelemetry traces. Scoped overrides adjust prompt behavior
+for specific sessions or tenant labels without redeploying code. Runtime code owns
+correlation, pagination continuation, accepted tool identity, and valid execution
+transitions.
 
-See [planners](runtime.md#planner-contract), [policies](runtime.md#policy-enforcement),
+See [composable prompts](prompts.md), [planners](runtime.md#planner-contract), [policies](runtime.md#policy-enforcement),
 [history](runtime.md#history-policies), and [host continuations](runtime.md#external-input-and-workflow-continuations).
 
 ## Typed answers and nested agents
