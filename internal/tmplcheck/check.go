@@ -2,6 +2,7 @@
 package tmplcheck
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -35,9 +36,10 @@ type (
 )
 
 // Check validates parsed template ASTs starting from rootType.
-// When rootType is nil, no static type constraints are checked.
+// When rootType is nil, dynamic root values are allowed while structural
+// AST invariants (such as defined named template targets) are still checked.
 func Check(parsed *template.Template, rootType Type, funcs template.FuncMap) error {
-	if parsed == nil || rootType == nil || parsed.Root == nil {
+	if parsed == nil || parsed.Root == nil {
 		return nil
 	}
 	if rt, ok := rootType.(*reflectType); ok && rt.t == reflect.TypeFor[reflect.Value]() {
@@ -610,16 +612,18 @@ func (c *checker) walkNamedTemplate(name string, pipeDot Type) error {
 		return nil
 	}
 
-	if sub := c.tmpl.Lookup(name); sub != nil && sub.Root != nil {
-		c.activeCalls[key] = true
-		subEnv := c.newVarEnv(pipeDot)
-		_, _, _, err := c.walkFlow(sub.Root, pipeDot, subEnv)
-		delete(c.activeCalls, key)
-		if err != nil {
-			return err
-		}
-		c.visitedCalls[key] = true
+	sub := c.tmpl.Lookup(name)
+	if sub == nil || sub.Root == nil {
+		return fmt.Errorf("template %q is not defined", name)
 	}
+	c.activeCalls[key] = true
+	subEnv := c.newVarEnv(pipeDot)
+	_, _, _, err := c.walkFlow(sub.Root, pipeDot, subEnv)
+	delete(c.activeCalls, key)
+	if err != nil {
+		return err
+	}
+	c.visitedCalls[key] = true
 	return nil
 }
 

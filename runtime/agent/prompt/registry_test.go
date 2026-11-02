@@ -357,6 +357,48 @@ func TestRegistryStaticFieldValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error validating valid override: %v", err)
 	}
+
+	// Register and SetOverride reject undefined local named templates without mutating active store content.
+	store := NewInMemoryStore()
+	scopedReg := NewRegistry(store)
+	if err := scopedReg.Register(PromptSpec{
+		ID:       "orders.refund.system",
+		AgentID:  "orders.refund",
+		Role:     PromptRoleSystem,
+		Template: "Baseline system prompt.",
+		ArgsType: reflect.TypeFor[struct{}](),
+	}); err != nil {
+		t.Fatalf("register orders.refund.system: %v", err)
+	}
+	if err := scopedReg.Register(PromptSpec{
+		ID:       "invalid.missing.template",
+		AgentID:  "orders.refund",
+		Role:     PromptRoleSystem,
+		Template: `Hello {{ template "missing" }}.`,
+		ArgsType: reflect.TypeFor[struct{}](),
+	}); !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound for undefined template at Register, got %v", err)
+	}
+	if err := scopedReg.SetOverride(context.Background(), "orders.refund.system", Scope{}, `Hello {{ template "missing" }}.`, nil); !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound for undefined template at SetOverride, got %v", err)
+	}
+	rendered, err := scopedReg.Render(context.Background(), "orders.refund.system", Scope{}, struct{}{})
+	if err != nil {
+		t.Fatalf("render after rejected SetOverride: %v", err)
+	}
+	if rendered.Text != "Baseline system prompt." {
+		t.Fatalf("expected baseline text to remain active after rejected SetOverride, got %q", rendered.Text)
+	}
+	if err := scopedReg.SetOverride(context.Background(), "orders.refund.system", Scope{}, `{{ define "sub" }}Updated{{ end }}{{ template "sub" . }} prompt.`, nil); err != nil {
+		t.Fatalf("expected valid local named template override to succeed, got %v", err)
+	}
+	rendered, err = scopedReg.Render(context.Background(), "orders.refund.system", Scope{}, struct{}{})
+	if err != nil {
+		t.Fatalf("render after valid local named template override: %v", err)
+	}
+	if rendered.Text != "Updated prompt." {
+		t.Fatalf("unexpected rendered text: %q", rendered.Text)
+	}
 }
 
 func TestRegistrySubPromptComposition(t *testing.T) {

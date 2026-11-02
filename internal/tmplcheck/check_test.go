@@ -414,3 +414,26 @@ func TestSliceTypePreservesTruth(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckUndefinedNamedTemplate verifies that invoking an undefined named
+// template via {{ template "missing" }} is rejected while defined local
+// templates and unused {{ define }} blocks pass.
+func TestCheckUndefinedNamedTemplate(t *testing.T) {
+	t.Parallel()
+
+	for _, rootType := range []Type{
+		ReflectType(reflect.TypeFor[struct{}]()),
+		ReflectType(reflect.TypeFor[any]()),
+		nil,
+	} {
+		missing := template.Must(template.New("root").Parse(`Hello {{ template "missing" }}.`))
+		if err := Check(missing, rootType, nil); err == nil {
+			t.Fatalf("expected error for undefined named template (rootType=%v), got nil", rootType)
+		}
+
+		defined := template.Must(template.New("root").Parse(`{{ define "sub" }}world{{ end }}{{ define "unused" }}{{ .NoSuchField }}{{ end }}Hello {{ template "sub" . }}.`))
+		if err := Check(defined, rootType, nil); err != nil {
+			t.Fatalf("expected defined named template to pass (rootType=%v), got: %v", rootType, err)
+		}
+	}
+}
