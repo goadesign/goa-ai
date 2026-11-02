@@ -652,3 +652,105 @@ func TestReview09SliceFlow(t *testing.T) {
 		})
 	}
 }
+
+// TestReviewA7cfSliceUnions checks result facts against Go using matching addressable roots.
+func TestReviewA7cfSliceUnions(t *testing.T) {
+	t.Parallel()
+
+	empty := ""
+	ptr := &empty
+	cases := []struct {
+		name, init, cond string
+		badTrue, accept  bool
+	}{
+		{"positive_array_pointer", `.PositivePtr`, `slice $v`, false, true},
+		{"positive_array_double_pointer", `.PositiveDouble`, `$v | slice`, false, true},
+		{"zero_array_pointer", `.ZeroPtr`, `slice $v`, true, true},
+		{"positive_array_pointer_indexed", `.PositivePtr`, `slice $v 0 0`, false, false},
+		{"string_double_pointer", `or .Double "fallback"`, `slice $v`, false, false},
+		{"mixed_pointer_direct_union", `or .Ptr "fallback"`, `slice $v`, false, false},
+		{"all_direct_union", `or .Values "fallback"`, `slice $v`, false, true},
+		{"mixed_branch_truth_merge", `or .Text "fallback"}}{{if .Flag}}{{$v = or .Ptr "fallback"}}{{end`, `slice $v`, false, false},
+		{"all_direct_branch_truth_merge", `or .Text "fallback"}}{{if .Flag}}{{$v = or .Values "fallback"}}{{end`, `slice $v`, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			positive := [2]int{1, 2}
+			positivePtr := &positive
+			data := &struct {
+				Item           review09Item
+				Ptr            *string
+				Double         **string
+				Text           string
+				Values         []int
+				PositivePtr    *[2]int
+				PositiveDouble **[2]int
+				ZeroPtr        *[0]int
+				Flag           bool
+			}{
+				Item:           review09Item{"ok"},
+				Ptr:            ptr,
+				Double:         &ptr,
+				Text:           "",
+				Values:         []int{1},
+				PositivePtr:    positivePtr,
+				PositiveDouble: &positivePtr,
+				ZeroPtr:        &[0]int{},
+				Flag:           true,
+			}
+			branch := `{{if ` + tc.cond + `}}{{else}}{{$x = "bad"}}{{end}}`
+			if tc.badTrue {
+				branch = `{{if ` + tc.cond + `}}{{$x = "bad"}}{{end}}`
+			}
+			src := `{{witness}}{{$x := .Item}}{{$v := ` + tc.init + `}}` + branch + `{{$x.Label}}`
+			calls := 0
+			funcs := template.FuncMap{"witness": func() string { calls++; return "" }}
+			spec := PromptSpec{ID: "a7cf", Role: PromptRoleSystem, Template: src, ArgsType: reflect.TypeOf(data), Funcs: funcs}
+			store := NewInMemoryStore()
+			reg := NewRegistry(store)
+			baseline := spec
+			baseline.Template = "base"
+			if err := reg.Register(baseline); err != nil {
+				t.Fatal(err)
+			}
+			entries := []error{
+				ValidatePromptTemplate(spec, src),
+				NewRegistry(nil).Register(spec),
+				NewRegistry(nil).ValidateSpecs([]PromptSpec{spec}),
+				reg.ValidateOverride(spec.ID, src),
+				reg.SetOverride(t.Context(), spec.ID, Scope{}, src, nil),
+			}
+			for i, err := range entries {
+				if (err == nil) != tc.accept {
+					t.Errorf("entry %d err=%v accept=%t", i, err, tc.accept)
+				}
+				if !tc.accept && !errors.Is(err, ErrTemplateFieldNotFound) {
+					t.Error("wrong validation error", err)
+				}
+			}
+			if calls != 0 {
+				t.Fatal("validation executed witness")
+			}
+			if err := store.Set(context.Background(), spec.ID, Scope{}, src, nil); err != nil {
+				t.Fatal(err)
+			}
+			content, renderErr := reg.Render(t.Context(), spec.ID, Scope{}, data)
+			renderCalls := calls
+			var out bytes.Buffer
+			oracle := template.Must(template.New("oracle").Funcs(funcs).Parse(src)).Execute(&out, data)
+			t.Logf("source=%q entries=%v render=%v witness=%d oracle=%v output=%q", src, entries, renderErr, renderCalls, oracle, out.String())
+			if tc.accept {
+				if renderErr != nil || oracle != nil || content == nil || content.Text != out.String() {
+					t.Fatal("positive control failed")
+				}
+			} else {
+				if !errors.Is(renderErr, ErrTemplateFieldNotFound) || renderCalls != 0 {
+					t.Fatal("known-invalid field reached execution", renderErr, renderCalls)
+				}
+				if oracle == nil || !strings.Contains(oracle.Error(), "can't evaluate field Label in type string") {
+					t.Fatal("oracle missed intended field failure", oracle)
+				}
+			}
+		})
+	}
+}
