@@ -327,14 +327,6 @@ func (k *knownTruthType) Range(twoVars bool) (Type, Type, error) {
 	return k.base.Range(twoVars)
 }
 
-// Slice resolves a built-in slice operation on the underlying type.
-func (k *knownTruthType) Slice() (Type, bool) {
-	if st, ok := k.base.(SliceType); ok {
-		return st.Slice()
-	}
-	return k.base, false
-}
-
 // newReflectType constructs a reflectType with explicit addressability tracking.
 func newReflectType(t reflect.Type, addressable bool) Type {
 	if t == nil {
