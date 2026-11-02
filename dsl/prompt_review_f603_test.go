@@ -618,3 +618,47 @@ func TestIndependentBA23BackEdge(t *testing.T) {
 		}
 	}
 }
+
+// TestNestedReferenceExtendPreservesBaseDefaultInPublicDSL verifies that a
+// nested object attribute combining outer Reference inheritance with local
+// Extend does not contaminate the shared Base default or separate Base
+// consumers during full DSL evaluation.
+func TestNestedReferenceExtendPreservesBaseDefaultInPublicDSL(t *testing.T) {
+	var base, child, plain goaexpr.UserType
+	err := runDSLWithError(t, func() {
+		base = Type("Base", func() {
+			Attribute("query", String, "Base query")
+		})
+		parent := Type("Parent", func() {
+			Attribute("settings", func() {
+				Attribute("options", func() {
+					Attribute("query", String, "Reference query", func() {
+						Default("reference")
+					})
+				})
+			})
+		})
+		child = Type("Child", func() {
+			Reference(parent)
+			Attribute("settings", &goaexpr.Object{}, func() {
+				Attribute("options", &goaexpr.Object{}, func() {
+					Attribute("query", String, "Local query")
+					Extend(base)
+				})
+			})
+		})
+		plain = Type("Plain", func() {
+			Extend(base)
+		})
+		Service("review", func() {
+			Method("query", func() {
+				Payload(child)
+				Result(plain)
+			})
+		})
+	})
+	require.NoError(t, err)
+	assert.Nil(t, base.Attribute().Find("query").DefaultValue, "shared Base must not gain a reference default")
+	assert.Nil(t, plain.Attribute().Find("query").DefaultValue, "separate Base consumer must not gain a reference default")
+	assert.Nil(t, child.Attribute().Find("settings").Find("options").Find("query").DefaultValue, "Extend retains precedence over Reference")
+}
