@@ -1096,7 +1096,7 @@ func TestGeneratedToolStreamValidationProducesSafeRecoveryCorrection(t *testing.
 	require.Nil(t, chunk)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, catalogCorrectionHeading+advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.Equal(t, catalogCorrectionHeading+`Field "query" must match its advertised input contract.`, validationErr.RecoveryCorrection())
 	rejected, cloneErr := validationErr.RejectedResponse()
 	require.NoError(t, cloneErr)
 	require.NotNil(t, rejected)

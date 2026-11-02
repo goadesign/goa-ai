@@ -65,6 +65,10 @@ func toolFieldCorrection(err error, payload rawjson.Message, fields []tools.Fiel
 	if len(fields) == 0 {
 		return advertisedToolInputCorrection
 	}
+	var codecErr *tools.ValidationError
+	if errors.As(err, &codecErr) {
+		return formatToolCorrections(codecToolCorrectionCandidates(err, fields))
+	}
 	var schemaErr *jsonschema.ValidationError
 	if !errors.As(err, &schemaErr) {
 		return advertisedToolInputCorrection
@@ -74,6 +78,49 @@ func toolFieldCorrection(err error, payload rawjson.Message, fields []tools.Fiel
 		return advertisedToolInputCorrection
 	}
 	return formatToolCorrections(collectToolCorrectionCandidates(schemaErr, input, fields))
+}
+
+// codecToolCorrectionCandidates visits wrapped and joined codec rejections.
+// Only generated field metadata supplies names and descriptions to the model.
+func codecToolCorrectionCandidates(err error, fields []tools.FieldMetadata) []toolCorrectionCandidate {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		candidates := make([]toolCorrectionCandidate, 0, len(causes))
+		for _, cause := range causes {
+			candidates = append(candidates, codecToolCorrectionCandidates(cause, fields)...)
+		}
+		return candidates
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return codecToolCorrectionCandidates(wrapped.Unwrap(), fields)
+	}
+	var failure *tools.ValidationError
+	if !errors.As(err, &failure) {
+		return []toolCorrectionCandidate{{unsupported: true}}
+	}
+	issues := failure.Issues()
+	candidates := make([]toolCorrectionCandidate, 0, len(issues))
+	for _, issue := range issues {
+		field, ok := tools.LookupFieldMetadata(fields, issue.Field)
+		// Codec issue paths may name submitted collection keys. Only
+		// generated names and unambiguous, non-union descriptions are safe
+		// here; schema validation owns branch-specific guidance.
+		if !ok || len(field.Branches) > 0 {
+			candidates = append(candidates, toolCorrectionCandidate{unsupported: true})
+			continue
+		}
+		var constraint string
+		switch issue.Constraint {
+		case "invalid_enum_value":
+			constraint = "must use an allowed value."
+		case "missing_field":
+			constraint = "is required."
+		default:
+			constraint = "must match its advertised input contract."
+		}
+		candidates = append(candidates, toolCorrectionCandidate{field: field, constraint: constraint})
+	}
+	return candidates
 }
 
 // collectToolCorrectionCandidates follows the selected branch of each union
