@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 	"text/template/parse"
@@ -220,10 +221,14 @@ func envStateKey(env *varEnv) string {
 	slices.Sort(names)
 	var b strings.Builder
 	for _, name := range names {
-		id := env.names[name]
+		id := typeID(env.types[env.names[name]])
+		b.WriteString(strconv.Itoa(len(name)))
+		b.WriteByte(':')
 		b.WriteString(name)
 		b.WriteByte('=')
-		b.WriteString(typeID(env.types[id]))
+		b.WriteString(strconv.Itoa(len(id)))
+		b.WriteByte(':')
+		b.WriteString(id)
 		b.WriteByte(';')
 	}
 	return b.String()
