@@ -220,19 +220,6 @@ func TestGeneratedValidators(t *testing.T) {
 		}
 	}
 }
-
-func TestMissingNestedObservation(t *testing.T) {
-	var input QueryInput
-	if err := json.Unmarshal([]byte("{\"root\":{}}"), &input); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if v := recover(); v != nil {
-			t.Logf("missing nested panic=%v", v)
-		}
-	}()
-	t.Logf("missing nested error=%v", ValidateQueryInput(&input))
-}
 `
 			require.NoError(t, os.WriteFile(filepath.Join(root, "suite_test.go"), []byte(testSource), 0o600))
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

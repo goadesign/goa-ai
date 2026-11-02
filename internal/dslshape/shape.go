@@ -94,66 +94,78 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 	return att
 }
 
-// Finalize recursively materializes Reference and Extend dependencies across
-// the reachable attribute graph and finalizes att. If the finalized top-level
-// type is an object with zero fields, Finalize collapses it to goaexpr.Empty.
+// Finalize ensures all Reference and Extend base attributes across the reachable
+// schema graph are finalized in dependency order before finalizing att. If the
+// finalized top-level type is an object with zero fields, Finalize collapses it
+// to goaexpr.Empty.
 func Finalize(att *goaexpr.AttributeExpr) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
 	}
-	materializeBasesAndRefs(att, make(map[*goaexpr.AttributeExpr]bool))
+	finalizeSubgraphBases(att, make(map[*goaexpr.AttributeExpr]bool))
 	att.Finalize()
 	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
 		att.Type = goaexpr.Empty
 	}
 }
 
-// materializeBasesAndRefs traverses actual AttributeExpr instances across the
-// reachable schema graph, recursively materializing each Reference and Base
-// attribute before inheriting or merging it into its consumer. Keying by
-// AttributeExpr pointer (rather than UserType.ID) ensures duplicated inline
-// union branch schemas and their duplicated base attributes are materialized,
-// and avoiding premature att.Finalize() calls during traversal prevents Goa's
-// recursive finalizer from clearing unmaterialized sibling bases.
-func materializeBasesAndRefs(a *goaexpr.AttributeExpr, visited map[*goaexpr.AttributeExpr]bool) {
-	if a == nil || a.Type == nil || a.Type == goaexpr.Empty || visited[a] {
+// finalizeSubgraphBases finds all Reference and Base attributes reachable from
+// root and finalizes each one only after finalizing all Reference and Base
+// attributes reachable within its own subgraph.
+func finalizeSubgraphBases(root *goaexpr.AttributeExpr, finalizedBases map[*goaexpr.AttributeExpr]bool) {
+	var bases []*goaexpr.AttributeExpr
+	collectReachableBases(root, make(map[*goaexpr.AttributeExpr]bool), &bases)
+	for _, b := range bases {
+		if b == nil || finalizedBases[b] {
+			continue
+		}
+		finalizedBases[b] = true
+		finalizeSubgraphBases(b, finalizedBases)
+		b.Finalize()
+	}
+}
+
+// collectReachableBases traverses actual AttributeExpr instances reachable from
+// a without mutating or finalizing them, recording every UserType attribute
+// referenced in References or Bases.
+func collectReachableBases(a *goaexpr.AttributeExpr, seen map[*goaexpr.AttributeExpr]bool, bases *[]*goaexpr.AttributeExpr) {
+	if a == nil || a.Type == nil || a.Type == goaexpr.Empty || seen[a] {
 		return
 	}
-	visited[a] = true
+	seen[a] = true
+	for _, ref := range a.References {
+		if ru, ok := ref.(goaexpr.UserType); ok && ru.Attribute() != nil {
+			collectReachableBases(ru.Attribute(), seen, bases)
+			*bases = append(*bases, ru.Attribute())
+		}
+	}
+	for _, base := range a.Bases {
+		if ru, ok := base.(goaexpr.UserType); ok && ru.Attribute() != nil {
+			collectReachableBases(ru.Attribute(), seen, bases)
+			*bases = append(*bases, ru.Attribute())
+		}
+	}
 	if ut, ok := a.Type.(goaexpr.UserType); ok {
-		materializeBasesAndRefs(ut.Attribute(), visited)
+		collectReachableBases(ut.Attribute(), seen, bases)
 	}
 	switch {
 	case goaexpr.IsObject(a.Type):
-		for _, ref := range a.References {
-			if ru, ok := ref.(goaexpr.UserType); ok {
-				materializeBasesAndRefs(ru.Attribute(), visited)
-				a.Inherit(ru.Attribute())
-			}
-		}
-		for _, base := range a.Bases {
-			if ru, ok := base.(goaexpr.UserType); ok {
-				materializeBasesAndRefs(ru.Attribute(), visited)
-				a.Merge(ru.Attribute())
-			}
-		}
-		a.Bases = nil
 		for _, nat := range *goaexpr.AsObject(a.Type) {
 			if nat != nil {
-				materializeBasesAndRefs(nat.Attribute, visited)
+				collectReachableBases(nat.Attribute, seen, bases)
 			}
 		}
 	case goaexpr.IsUnion(a.Type):
 		for _, nat := range goaexpr.AsUnion(a.Type).Values {
 			if nat != nil {
-				materializeBasesAndRefs(nat.Attribute, visited)
+				collectReachableBases(nat.Attribute, seen, bases)
 			}
 		}
 	case goaexpr.IsArray(a.Type):
-		materializeBasesAndRefs(goaexpr.AsArray(a.Type).ElemType, visited)
+		collectReachableBases(goaexpr.AsArray(a.Type).ElemType, seen, bases)
 	case goaexpr.IsMap(a.Type):
 		m := goaexpr.AsMap(a.Type)
-		materializeBasesAndRefs(m.ElemType, visited)
-		materializeBasesAndRefs(m.KeyType, visited)
+		collectReachableBases(m.ElemType, seen, bases)
+		collectReachableBases(m.KeyType, seen, bases)
 	}
 }
