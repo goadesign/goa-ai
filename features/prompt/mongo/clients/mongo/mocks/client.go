@@ -25,6 +25,7 @@ type (
 	ClientPingFunc    func(p0 context.Context) error
 	ClientResolveFunc func(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) (*prompt.Override, error)
 	ClientSetFunc     func(ctx context.Context, promptID prompt.Ident, scope prompt.Scope, template string, metadata map[string]string) error
+	ClientResetFunc   func(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error
 	ClientHistoryFunc func(ctx context.Context, promptID prompt.Ident) ([]*prompt.Override, error)
 	ClientListFunc    func(ctx context.Context) ([]*prompt.Override, error)
 )
@@ -102,6 +103,23 @@ func (m *Client) Set(ctx context.Context, promptID prompt.Ident, scope prompt.Sc
 	}
 	m.t.Helper()
 	m.t.Error("unexpected Set call")
+	return nil
+}
+
+func (m *Client) AddReset(f ClientResetFunc) {
+	m.m.Add("Reset", f)
+}
+
+func (m *Client) SetReset(f ClientResetFunc) {
+	m.m.Set("Reset", f)
+}
+
+func (m *Client) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
+	if f := m.m.Next("Reset"); f != nil {
+		return f.(ClientResetFunc)(ctx, promptID, scope)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected Reset call")
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/boundedresult"
+	"goa.design/goa-ai/internal/dslshape"
 	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
@@ -874,8 +875,8 @@ func canonicalBoundedResultFieldNames(bounds *ToolBoundsExpr) []string {
 //     materialized once at the expression layer.
 //   - Method bindings are resolved after validation and must be deterministic.
 func (t *ToolExpr) Finalize() {
-	finalizeToolShape(t.Args)
-	finalizeToolShape(t.Return)
+	dslshape.Finalize(t.Args)
+	dslshape.Finalize(t.Return)
 
 	if t.bindMethodName == "" {
 		return
@@ -894,13 +895,6 @@ func (t *ToolExpr) Finalize() {
 		}
 	}
 	panic(fmt.Sprintf("tool %q: method %q not found in service %q after successful validation", t.Name, t.bindMethodName, svc.Name))
-}
-
-func finalizeToolShape(att *goaexpr.AttributeExpr) {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return
-	}
-	att.Finalize()
 }
 
 // BoundServiceName returns the service name specified via BindTo, if any.

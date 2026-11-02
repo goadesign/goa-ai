@@ -205,32 +205,58 @@ trusted host; child-run links preserve distinct execution identity.
 
 ---
 
-## Prompt Management in v1
+<a id="prompt-management-in-v1"></a>
+## Composable Prompt Management
 
-Goa-AI v1 does **not** require an agent prompt declaration DSL. The MCP `Prompt` declaration below exposes service-owned messages to an MCP client; it does not configure the agent prompt registry.
-Prompt management is intentionally runtime-driven:
+Goa-AI provides first-class composable prompt declarations, compile-time AST validation, typed code generation, runtime scoped overrides, and per-request OpenTelemetry tracing.
 
-- Register baseline prompt specs via `Runtime.PromptRegistry.Register(prompt.PromptSpec{...})`.
-- Configure scoped overrides with `runtime.WithPromptStore(...)` (for example, Mongo prompt store).
-- Rendering returns text and prompt identity but never writes runtime storage.
-  When a `prompt.RenderRecorder` is present, each successful render adds the
-  same ID, version, and scope event used by every runtime path.
-- Render prompts in planners using `PlannerContext.RenderPrompt(...)`; the
-  runtime carries recorded events through the accepted planner result.
-- If application code renders text before `Start`, create a recorder with
-  `prompt.NewRenderRecorder`, attach it with `prompt.WithRenderRecorder`, and
-  pass `recorder.Events()` through `runtime.WithRenderedPrompts(...)` alongside
-  the messages containing that text.
-- For agent-as-tool registrations, consumer-side prompt rendering is optional. If you need the
-  consumer to render a payload-only user message, you may map tool IDs to prompt IDs with
-  `runtime.WithPromptSpec(...)` (or provide templates/text). When no consumer-side content is
-  configured, the runtime uses the canonical JSON tool payload bytes as the nested user message,
-  and provider planners can render their own prompts with injected server-side context. Consumer-side
-  rendering records the same event and carries it in the child workflow input. `RunOneShot` also uses
-  the same recorder contract for renders performed by its callback.
+Prompts can be declared at the agent level or service level:
 
-This keeps prompt rollout and overrides operational (runtime/store level) while the DSL remains focused
-on agent/tool contracts.
+- **Agent System Prompt (`SystemPrompt`)**: Declares the baseline system instructions for an agent (`<service>.<agent>.system`, role `"system"`). Supports static text shorthand, parameterized templates with closures and typed `Args`, or full DSL closures.
+- **Agent Prompts (`Prompt` inside `Agent`)**: Declares turn templates, few-shot examples, triage instructions, or synthesis prompts owned by an agent (`<service>.<agent>.<name>`, default role `"user"`).
+- **Service Prompts (`Prompt` inside `Service`)**: Declares shared prompt templates (`<service>.<name>`) usable across multiple agents, service-owned direct completions, or direct service logic.
+- **Sub-Prompt Composition (`{{ render "<prompt_id>" [data] }}`)**: Prompts can compose other registered prompts. Omission of the data argument (`{{ render "service.shared_safety" }}`) forwards the parent template's root input data automatically, while an explicit argument (`{{ render "support.customer_profile" . }}`) passes that exact value (including a rebound cursor inside `range` or `with`). Composition cycles return `prompt.ErrTemplateCycle` at runtime.
+
+```go
+var Ticket = Type("Ticket", func() {
+    Attribute("id", String, "Ticket ID")
+    Attribute("issue", String, "Customer issue description")
+    Required("id", "issue")
+})
+
+var _ = Service("support", func() {
+    Prompt("safety_rules", func() {
+        Role("system")
+        Template("Never disclose confidential credentials or internal tokens.")
+    })
+
+    Agent("assistant", "Support triage assistant", func() {
+        SystemPrompt("You are {{ .AssistantName }}. {{ render \"support.safety_rules\" }}", func() {
+            Args(func() {
+                Attribute("assistant_name", String, "Assistant name")
+                Required("assistant_name")
+            })
+        })
+
+        Prompt("triage", func() {
+            Role("user")
+            Template("Please triage ticket {{ .Ticket.ID }}: {{ .Ticket.Issue }}")
+            Args(func() {
+                Attribute("ticket", Ticket, "Ticket details")
+                Required("ticket")
+            })
+        })
+    })
+})
+```
+
+`goa gen` parses every template AST (`missingkey=error`), validates field paths against declared `Args` schemas, and emits typed argument structs, spec builders, and typed render helpers into `gen/<service>/agents/<agent>/prompts.go` and `gen/<service>/prompts/prompts.go`.
+
+Agent baseline specs are automatically registered into `rt.PromptRegistry` during `Register<Agent>Agent`. Service-level prompts are registered once at startup via `prompts.RegisterPrompts(rt.PromptRegistry)`. Manual registration via `rt.PromptRegistry.Register(prompt.PromptSpec{...})` remains fully supported for backward compatibility and dynamic runtime registries.
+
+Scoped overrides can be configured via `runtime.WithPromptStore(...)` and managed via `rt.PromptRegistry.SetOverride`, `ValidateOverride`, `ResetOverride`, `Resolve`, and `History`. Planners render prompts with the generated `Render<Name>Prompt` helpers and pass `content.Refs` on `model.Request.PromptRefs` for per-request provenance and OpenTelemetry tracing.
+
+See [Composable Prompt Management](prompts.md) for the complete guide, including sub-prompt composition, rendering contracts, override precedence, and store implementations. Note that the MCP `Prompt` declaration on `Method` below is separate: it exposes service-owned messages to external MCP clients over JSON-RPC.
 
 ---
 
@@ -476,18 +502,30 @@ an estimate is not a context-window guarantee or a billing count.
 | `AfterTools()`  | Inside `Cache`     | Place cache checkpoint after tool definitions |
 
 
+### Prompt Functions
+
+
+| Function                     | Context                            | Purpose                                                                                                                                     |
+| ---------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SystemPrompt(args ...any)`  | Inside `Agent`                     | Declares agent baseline system prompt (`<service>.<agent>.system`, role `"system"`) via static shorthand, parameterized template, or closure |
+| `Prompt(name, args ...any)`  | Inside `Agent` or `Service`        | Declares composable prompt template (`<service>.<agent>.<name>` or `<service>.<name>`) with AST validation and typed code generation       |
+| `Template(source)`           | Inside `Prompt` / `SystemPrompt`   | Sets Go `text/template` source string validated against declared `Args` at compile time, supporting `{{ render ... }}`                      |
+| `Role(role)`                 | Inside `Prompt`                    | Sets prompt role (`"system"`, `"user"`, `"tool"`, `"synthesis"`)                                                                            |
+| `Args(dsl)`                  | Inside `Prompt` / `SystemPrompt`   | Defines structured input argument schema for compile-time template field validation and typed Go struct generation                         |
+
+
 ### MCP Functions
 
 
-| Function                            | Context                            | Purpose                                        |
-| ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
-| `MCP(name, version)`       | Inside `Service`                   | Enables MCP protocol for the service           |
-| `DynamicTools()` | Inside `MCP` | Generates tool list/call methods implemented by the application |
-| `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
-| `ToolContent(field)` | Inside an MCP method's `Tool` block | Sends a typed result array as MCP content, excluding it from structured JSON |
-| `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
-| `Prompt(name, description)` | Inside `Method` (with MCP enabled) | Exposes typed, parameterized MCP messages |
-| `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
+| Function                            | Context                            | Purpose                                                                       |
+| ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| `MCP(name, version)`                | Inside `Service`                   | Enables MCP protocol for the service                                          |
+| `DynamicTools()`                    | Inside `MCP`                       | Generates tool list/call methods implemented by the application                |
+| `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                                                      |
+| `ToolContent(field)`                | Inside an MCP method's `Tool` block| Sends a typed result array as MCP content, excluding it from structured JSON  |
+| `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider                                         |
+| `Prompt(name, description)`         | Inside `Method` (with MCP enabled) | Exposes typed, parameterized MCP prompt messages via MCP `prompts/get` protocol|
+| `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template                                            |
 
 Every service that calls `MCP(...)` must also use Goa's service-level
 `JSONRPC(func() { POST("/path") })` DSL to choose its HTTP endpoint.
@@ -2460,6 +2498,8 @@ separate structured result contract. There is no second result mode, untyped
 content field or compatibility decoder.
 
 ### MCP Capabilities
+
+The MCP capabilities below define external JSON-RPC protocol interfaces exposed to MCP clients (such as `Prompt(name, desc)` in `Method` for MCP `prompts/get`). They are distinct from Goa-AI's internal composable prompt management (`SystemPrompt` and `Prompt` on `Agent` and `Service`), which configures internal model prompts, typed render helpers, and runtime scoped overrides.
 
 
 | DSL Function                 | MCP Capability                     |

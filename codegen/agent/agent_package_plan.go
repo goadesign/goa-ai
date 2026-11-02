@@ -40,6 +40,7 @@ type (
 		registryPaths            []string
 		definitionAgentIDs       []string
 		registrySources          []*agentRegistrySourcesData
+		promptsPlan              *promptPackagePlan
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -176,6 +177,7 @@ const (
 	mcpRuntimeImportPath     = "goa.design/goa-ai/runtime/mcp"
 	modelImportPath          = "goa.design/goa-ai/runtime/agent/model"
 	plannerImportPath        = "goa.design/goa-ai/runtime/agent/planner"
+	promptImportPath         = "goa.design/goa-ai/runtime/agent/prompt"
 	runtimeImportPath        = "goa.design/goa-ai/runtime/agent/runtime"
 	toolsImportPath          = "goa.design/goa-ai/runtime/agent/tools"
 )
@@ -255,6 +257,13 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 			return err
 		}
 		sources.declaration = declaration
+	}
+
+	if agent.Expr != nil && len(agent.Expr.Prompts) > 0 {
+		p.promptsPlan = newPromptPackagePlan(p.pkg)
+		if err := p.promptsPlan.declare(agent.Expr.Prompts); err != nil {
+			return fmt.Errorf("declare agent %q prompt package plan: %w", agent.ID, err)
+		}
 	}
 
 	var err error
@@ -373,6 +382,7 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		mcpRuntimeImportPath:   "mcpruntime",
 		modelImportPath:        "model",
 		plannerImportPath:      "planner",
+		promptImportPath:       "prompt",
 		runtimeImportPath:      "agentsruntime",
 		toolsImportPath:        "tools",
 	}
@@ -625,6 +635,12 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 			toolset.agentToolsRuntimeAlias = p.pkg.ImportName(agentToolsRuntimePath)
 			toolset.agentToolsProviderAlias = p.pkg.ImportName(providerPath)
 		}
+	}
+	if p.promptsPlan != nil && len(agent.Prompts) > 0 {
+		if err := p.promptsPlan.link(agent.Prompts, agent.ID, false); err != nil {
+			return fmt.Errorf("link agent %q prompt package plan: %w", agent.ID, err)
+		}
+		agent.promptsPlan = p.promptsPlan
 	}
 	return nil
 }

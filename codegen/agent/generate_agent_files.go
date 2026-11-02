@@ -48,6 +48,20 @@ func agentFiles(
 		agentConfigFile(agent),
 		agentRegistryFile(agent),
 	}
+	pfile, err := agentPromptsFile(agent)
+	if err != nil {
+		return nil, err
+	}
+	if pfile != nil {
+		files = append(files, pfile)
+	}
+	pjsonFile, err := agentPromptSchemasJSONFile(agent)
+	if err != nil {
+		return nil, err
+	}
+	if pjsonFile != nil {
+		files = append(files, pjsonFile)
+	}
 	agg := agentSpecsAggregatorFile(aggregates.file(agent.ID))
 	if agg != nil {
 		files = append(files, agg)

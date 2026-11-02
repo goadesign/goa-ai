@@ -1,3 +1,5 @@
+// Package prompt provides prompt template registry management, scoped override
+// resolution, sub-prompt rendering composition, and render event publication.
 package prompt
 
 import (
@@ -7,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"text/template"
+
+	"goa.design/goa-ai/internal/tmplcheck"
 )
 
 type (
@@ -27,6 +31,8 @@ type (
 		specs map[Ident]PromptSpec
 		store Store
 	}
+
+	renderStackKey struct{}
 )
 
 // NewRegistry returns an empty prompt registry.
@@ -60,51 +66,13 @@ func (r *Registry) Register(spec PromptSpec) error {
 
 // Render resolves and renders one prompt using baseline+override composition.
 func (r *Registry) Render(ctx context.Context, id Ident, scope Scope, data any) (*PromptContent, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if id == "" {
-		return nil, fmt.Errorf("%w: id is required", ErrPromptNotFound)
-	}
-
-	spec, err := r.lookupSpec(id)
+	content, events, err := r.render(ctx, id, scope, data)
 	if err != nil {
 		return nil, err
 	}
-
-	templateSource := spec.Template
-	version := spec.Version
-	if r.store != nil {
-		override, resolveErr := r.store.Resolve(ctx, id, scope)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("resolve prompt override %q: %w", id, resolveErr)
-		}
-		if override != nil {
-			templateSource = override.Template
-			version = override.Version
-			if version == "" {
-				version = VersionFromTemplate(templateSource)
-			}
-		}
+	for _, event := range events {
+		r.publishRender(ctx, event)
 	}
-
-	rendered, err := renderTemplate(spec, templateSource, data)
-	if err != nil {
-		return nil, err
-	}
-
-	content := &PromptContent{
-		Text: rendered,
-		Ref: PromptRef{
-			ID:      spec.ID,
-			Version: version,
-		},
-	}
-	r.publishRender(ctx, RenderEvent{
-		PromptID: spec.ID,
-		Version:  version,
-		Scope:    scope,
-	})
 	return content, nil
 }
 
@@ -128,6 +96,231 @@ func (r *Registry) List() []PromptSpec {
 	return specs
 }
 
+// Spec returns the registered baseline prompt spec for id, or false if not found.
+func (r *Registry) Spec(id Ident) (PromptSpec, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	spec, ok := r.specs[id]
+	if !ok {
+		return PromptSpec{}, false
+	}
+	return clonePromptSpec(spec), true
+}
+
+// ValidateOverride checks that templateSource is valid for the prompt registered with id,
+// verifying syntax and checking field accesses against spec.ArgsType.
+func (r *Registry) ValidateOverride(id Ident, templateSource string) error {
+	if id == "" {
+		return fmt.Errorf("%w: id is required", ErrPromptNotFound)
+	}
+	if templateSource == "" {
+		return fmt.Errorf("%w: template is required", ErrInvalidPromptSpec)
+	}
+	spec, err := r.lookupSpec(id)
+	if err != nil {
+		return err
+	}
+	return ValidatePromptTemplate(spec, templateSource)
+}
+
+// ValidateSpecs validates baseline prompt declarations before registration,
+// ensuring each spec is valid, no duplicates exist within specs, and no spec ID
+// is already registered in r. It does not mutate the registry.
+func (r *Registry) ValidateSpecs(specs []PromptSpec) error {
+	seen := make(map[Ident]struct{}, len(specs))
+	for _, spec := range specs {
+		if err := validatePromptSpec(spec); err != nil {
+			return err
+		}
+		if _, exists := seen[spec.ID]; exists {
+			return fmt.Errorf("%w: duplicate prompt spec ID in input: %s", ErrDuplicatePromptSpec, spec.ID)
+		}
+		seen[spec.ID] = struct{}{}
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for id := range seen {
+		if _, exists := r.specs[id]; exists {
+			return fmt.Errorf("%w: %s", ErrDuplicatePromptSpec, id)
+		}
+	}
+	return nil
+}
+
+// SetOverride validates and persists a prompt override in the configured store.
+func (r *Registry) SetOverride(ctx context.Context, id Ident, scope Scope, templateSource string, metadata map[string]string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.store == nil {
+		return ErrPromptStoreNotConfigured
+	}
+	if err := r.ValidateOverride(id, templateSource); err != nil {
+		return err
+	}
+	return r.store.Set(ctx, id, scope, templateSource, metadata)
+}
+
+// ResetOverride destructively removes stored override records matching the exact
+// (id, scope) pair in the configured store. Subsequent resolutions for this prompt
+// fall back to the next applicable scoped override or baseline spec.
+func (r *Registry) ResetOverride(ctx context.Context, id Ident, scope Scope) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.store == nil {
+		return ErrPromptStoreNotConfigured
+	}
+	if _, err := r.lookupSpec(id); err != nil {
+		return err
+	}
+	return r.store.Reset(ctx, id, scope)
+}
+
+// Resolve returns the baseline PromptSpec and the active Override (if any) for id and scope.
+func (r *Registry) Resolve(ctx context.Context, id Ident, scope Scope) (PromptSpec, *Override, error) {
+	if err := ctx.Err(); err != nil {
+		return PromptSpec{}, nil, err
+	}
+	if id == "" {
+		return PromptSpec{}, nil, fmt.Errorf("%w: id is required", ErrPromptNotFound)
+	}
+
+	spec, err := r.lookupSpec(id)
+	if err != nil {
+		return PromptSpec{}, nil, err
+	}
+
+	if r.store == nil {
+		return spec, nil, nil
+	}
+
+	override, resolveErr := r.store.Resolve(ctx, id, scope)
+	if resolveErr != nil {
+		return PromptSpec{}, nil, fmt.Errorf("resolve prompt override %q: %w", id, resolveErr)
+	}
+	return spec, override, nil
+}
+
+// History returns all stored override records for id, newest-first.
+func (r *Registry) History(ctx context.Context, id Ident) ([]*Override, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return nil, fmt.Errorf("%w: id is required", ErrPromptNotFound)
+	}
+	if _, err := r.lookupSpec(id); err != nil {
+		return nil, err
+	}
+	if r.store == nil {
+		return nil, ErrPromptStoreNotConfigured
+	}
+	return r.store.History(ctx, id)
+}
+
+func renderStackFromContext(ctx context.Context) []Ident {
+	if stack, ok := ctx.Value(renderStackKey{}).([]Ident); ok {
+		return stack
+	}
+	return nil
+}
+
+// validatePromptSpec enforces baseline prompt registration requirements.
+func validatePromptSpec(spec PromptSpec) error {
+	if spec.ID == "" {
+		return fmt.Errorf("%w: id is required", ErrInvalidPromptSpec)
+	}
+	if spec.Role == "" {
+		return fmt.Errorf("%w: role is required", ErrInvalidPromptSpec)
+	}
+	if spec.Template == "" {
+		return fmt.Errorf("%w: template is required", ErrInvalidPromptSpec)
+	}
+	return ValidatePromptTemplate(spec, spec.Template)
+}
+
+// clonePromptSpec returns a safe copy of a prompt spec.
+func clonePromptSpec(spec PromptSpec) PromptSpec {
+	cloned := spec
+	if spec.Funcs != nil {
+		cloned.Funcs = make(template.FuncMap, len(spec.Funcs))
+		for key, value := range spec.Funcs {
+			cloned.Funcs[key] = value
+		}
+	}
+	return cloned
+}
+
+func (r *Registry) render(ctx context.Context, id Ident, scope Scope, data any) (*PromptContent, []RenderEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if id == "" {
+		return nil, nil, fmt.Errorf("%w: id is required", ErrPromptNotFound)
+	}
+
+	stack := renderStackFromContext(ctx)
+	for _, parentID := range stack {
+		if parentID == id {
+			return nil, nil, fmt.Errorf("%w: prompt %q recursively renders itself (chain: %v)", ErrTemplateCycle, id, append(stack, id))
+		}
+	}
+	childStack := append(append([]Ident(nil), stack...), id)
+	childCtx := context.WithValue(ctx, renderStackKey{}, childStack)
+
+	spec, override, err := r.Resolve(ctx, id, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	templateSource := spec.Template
+	version := spec.Version
+	if override != nil {
+		templateSource = override.Template
+		version = override.Version
+		if version == "" {
+			version = VersionFromTemplate(templateSource)
+		}
+	}
+
+	rendered, childRefs, childEvents, err := r.renderTemplate(childCtx, spec, templateSource, scope, data)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rootRef := PromptRef{
+		ID:      spec.ID,
+		Version: version,
+	}
+	seen := make(map[PromptRef]struct{}, 1+len(childRefs))
+	allRefs := make([]PromptRef, 0, 1+len(childRefs))
+	seen[rootRef] = struct{}{}
+	allRefs = append(allRefs, rootRef)
+	for _, ref := range childRefs {
+		if _, exists := seen[ref]; exists {
+			continue
+		}
+		seen[ref] = struct{}{}
+		allRefs = append(allRefs, ref)
+	}
+
+	content := &PromptContent{
+		Text: rendered,
+		Ref:  rootRef,
+		Refs: allRefs,
+	}
+	childEvents = append(childEvents, RenderEvent{
+		PromptID: spec.ID,
+		Version:  version,
+		Scope:    scope,
+	})
+	return content, childEvents, nil
+}
+
 // lookupSpec resolves one prompt spec by ID.
 func (r *Registry) lookupSpec(id Ident) (PromptSpec, error) {
 	r.mu.RLock()
@@ -147,49 +340,50 @@ func (r *Registry) publishRender(ctx context.Context, event RenderEvent) {
 	}
 }
 
-// renderTemplate parses and executes one prompt template.
-func renderTemplate(spec PromptSpec, source string, data any) (string, error) {
+// renderTemplate parses and executes one prompt template, injecting sub-prompt rendering.
+func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source string, scope Scope, data any) (string, []PromptRef, []RenderEvent, error) {
+	var (
+		childRefs   []PromptRef
+		childEvents []RenderEvent
+	)
 	tmpl := template.New(spec.ID.String()).Option("missingkey=error")
-	if len(spec.Funcs) > 0 {
-		tmpl = tmpl.Funcs(spec.Funcs)
+	funcs := template.FuncMap{
+		"render": func(subID string, subData ...any) (string, error) {
+			if subID == "" {
+				return "", fmt.Errorf("%w: sub-prompt id is required", ErrPromptNotFound)
+			}
+			arg := data
+			if len(subData) > 0 {
+				arg = subData[0]
+			}
+			subContent, subEvents, err := r.render(ctx, Ident(subID), scope, arg)
+			if err != nil {
+				return "", err
+			}
+			childRefs = append(childRefs, subContent.Refs...)
+			childEvents = append(childEvents, subEvents...)
+			return subContent.Text, nil
+		},
 	}
+	for key, value := range spec.Funcs {
+		funcs[key] = value
+	}
+	tmpl = tmpl.Funcs(funcs)
+
 	parsed, err := tmpl.Parse(source)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s: %w", ErrTemplateParse, spec.ID, err)
+		return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateParse, spec.ID, err)
+	}
+
+	if spec.ArgsType != nil {
+		if err := tmplcheck.Check(parsed, tmplcheck.ReflectType(spec.ArgsType), funcs); err != nil {
+			return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateFieldNotFound, spec.ID, err)
+		}
 	}
 
 	var buffer bytes.Buffer
 	if err := parsed.Execute(&buffer, data); err != nil {
-		return "", fmt.Errorf("%w: %s: %w", ErrTemplateExecute, spec.ID, err)
+		return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateExecute, spec.ID, err)
 	}
-	return buffer.String(), nil
-}
-
-// validatePromptSpec enforces baseline prompt registration requirements.
-func validatePromptSpec(spec PromptSpec) error {
-	if spec.ID == "" {
-		return fmt.Errorf("%w: id is required", ErrInvalidPromptSpec)
-	}
-	if spec.AgentID == "" {
-		return fmt.Errorf("%w: agent_id is required", ErrInvalidPromptSpec)
-	}
-	if spec.Role == "" {
-		return fmt.Errorf("%w: role is required", ErrInvalidPromptSpec)
-	}
-	if spec.Template == "" {
-		return fmt.Errorf("%w: template is required", ErrInvalidPromptSpec)
-	}
-	return nil
-}
-
-// clonePromptSpec returns a safe copy of a prompt spec.
-func clonePromptSpec(spec PromptSpec) PromptSpec {
-	cloned := spec
-	if spec.Funcs != nil {
-		cloned.Funcs = make(template.FuncMap, len(spec.Funcs))
-		for key, value := range spec.Funcs {
-			cloned.Funcs[key] = value
-		}
-	}
-	return cloned
+	return buffer.String(), childRefs, childEvents, nil
 }

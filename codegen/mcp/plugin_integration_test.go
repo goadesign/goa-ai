@@ -745,7 +745,7 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, readerTest.Close())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./gen/...")
+	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-race", "./gen/...")
 	command.Dir = dir
 	command.Env = append(os.Environ(), "GOWORK=off")
 	output, err := command.CombinedOutput()

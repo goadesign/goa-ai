@@ -1,11 +1,13 @@
 package codegen
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	ir "goa.design/goa-ai/codegen/ir"
+	"goa.design/goa-ai/codegen/jsonschema"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -50,12 +52,18 @@ type (
 	// Templates use this to generate service-scoped agent packages and to access
 	// both service-level types (via Service.UserTypes) and agent-level artifacts.
 	ServiceAgentsData struct {
+		// Genpkg is the root generated package path.
+		Genpkg string
 		// Service contains the Goa service metadata from the core generators.
 		Service *service.Data
 		// Agents lists each agent declared within the service DSL.
 		Agents []*AgentData
 		// Completions lists each typed assistant-output contract declared by the service.
 		Completions []*CompletionData
+		// Prompts lists each service-level prompt template declared under this service.
+		Prompts []*PromptData
+		// promptsPlan stores the linked package plan for service-level prompts.
+		promptsPlan *promptPackagePlan
 		// RegistryClients lists the registry clients written under this service.
 		RegistryClients []*RegistryClientData
 		// HasMCP indicates whether any agent under this service references external
@@ -137,6 +145,10 @@ type (
 		ToolSpecsDir string
 		// RunPolicy captures caps/time budget settings.
 		RunPolicy RunPolicyData
+		// Prompts contains all baseline prompt templates declared on this agent.
+		Prompts []*PromptData
+		// promptsPlan stores the linked package plan for agent-level prompts.
+		promptsPlan *promptPackagePlan
 		// UsedToolsets lists toolsets referenced via `Use`.
 		UsedToolsets []*ToolsetData
 		// ExportedToolsets lists toolsets declared via `Export`.
@@ -205,6 +217,44 @@ type (
 		Service string
 		// Method is the name of the target Goa method.
 		Method string
+	}
+
+	// PromptData represents one prompt template for code generation.
+	PromptData struct {
+		// Expr is the underlying PromptExpr AST.
+		Expr *agentsExpr.PromptExpr
+		// ID is the canonical prompt identifier (e.g., "svc.agent.system").
+		ID string
+		// AgentID is the enclosing agent ID, or empty for service-level prompts.
+		AgentID string
+		// ConstantName is the Go constant identifier (e.g. "SystemPromptID" or "PromptTriageID").
+		ConstantName string
+		// SpecFuncName is the Go factory function name (e.g. "PromptSpecSystem" or "PromptSpecTriage").
+		SpecFuncName string
+		// RenderFuncName is the Go render helper name (e.g. "RenderSystemPrompt" or "RenderTriagePrompt").
+		RenderFuncName string
+		// RenderWithRegistryFuncName is the Go render helper name accepting an explicit Registry.
+		RenderWithRegistryFuncName string
+		// ArgsTypeName is the Go type name for the typed args struct (e.g. "SystemPromptArgs" or "TriagePromptArgs").
+		ArgsTypeName string
+		// Name is the authored prompt name.
+		Name string
+		// GoName is the Go identifier derived from Name.
+		GoName string
+		// Description is human-readable documentation.
+		Description string
+		// Role is the prompt role (system, user, tool, synthesis).
+		Role string
+		// Template is the Go text/template string.
+		Template string
+		// Version is the precomputed sha256:... version.
+		Version string
+		// HasArgs is true when the prompt declares an Args attribute.
+		HasArgs bool
+		// ArgsDef is the Go type definition for the Args struct.
+		ArgsDef string
+		// SchemaJSON is the compiled JSON Schema bytes for the Args attribute.
+		SchemaJSON []byte
 	}
 
 	// RunPolicyData represents the runtime execution constraints and resource
@@ -910,6 +960,9 @@ const (
 	// 2 minutes accommodates typical LLM response times with retries while
 	// preventing indefinite hangs.
 	defaultPlannerActivityTimeout = 2 * time.Minute
+
+	// systemPromptName is the canonical name for an agent's system prompt.
+	systemPromptName = "system"
 )
 
 // buildGeneratorDataFromIR combines the saved agent design with the service
@@ -924,10 +977,19 @@ func buildGeneratorDataFromIR(
 	}
 	services := make([]*ServiceAgentsData, 0, len(design.Services))
 	for _, svcIR := range design.Services {
-		if svcIR == nil || (len(svcIR.Agents) == 0 && len(svcIR.Completions) == 0) {
+		hasServicePrompts := false
+		if design.AgentsRoot != nil {
+			for _, p := range design.AgentsRoot.Prompts {
+				if p.Service != nil && p.Service.Name == svcIR.Name {
+					hasServicePrompts = true
+					break
+				}
+			}
+		}
+		if svcIR == nil || (len(svcIR.Agents) == 0 && len(svcIR.Completions) == 0 && !hasServicePrompts) {
 			continue
 		}
-		svc := &ServiceAgentsData{Service: servicesData.Get(svcIR.Name)}
+		svc := &ServiceAgentsData{Service: servicesData.Get(svcIR.Name), Genpkg: design.Genpkg}
 		for _, agentIR := range svcIR.Agents {
 			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData, mcpRoot)
 			if err != nil {
@@ -940,6 +1002,17 @@ func buildGeneratorDataFromIR(
 		}
 		for _, completionIR := range svcIR.Completions {
 			svc.Completions = append(svc.Completions, newCompletionDataFromIR(completionIR))
+		}
+		if design.AgentsRoot != nil {
+			for _, p := range design.AgentsRoot.Prompts {
+				if p.Service != nil && p.Service.Name == svcIR.Name {
+					pdata, err := newPromptData(p, "")
+					if err != nil {
+						return nil, err
+					}
+					svc.Prompts = append(svc.Prompts, pdata)
+				}
+			}
 		}
 		services = append(services, svc)
 	}
@@ -1098,7 +1171,76 @@ func newAgentData(
 		}
 	}
 
+	if agentIR.Expr != nil && len(agentIR.Expr.Prompts) > 0 {
+		for _, p := range agentIR.Expr.Prompts {
+			pdata, err := newPromptData(p, agent.ID)
+			if err != nil {
+				return nil, err
+			}
+			agent.Prompts = append(agent.Prompts, pdata)
+		}
+	}
+
 	return agent, nil
+}
+
+// newPromptData converts one PromptExpr into its code-generation representation.
+func newPromptData(p *agentsExpr.PromptExpr, agentID string) (*PromptData, error) {
+	name := p.Name
+	goName := codegen.Goify(name, true)
+	version := p.Version()
+	id := string(p.ID())
+
+	constantName := "Prompt" + goName + "ID"
+	specFuncName := "PromptSpec" + goName
+	renderFuncName := "Render" + goName + "Prompt"
+	renderWithRegistryFuncName := "Render" + goName + "PromptWithRegistry"
+	argsTypeName := goName + "PromptArgs"
+	if name == systemPromptName {
+		constantName = "SystemPromptID"
+		specFuncName = "PromptSpecSystem"
+		renderFuncName = "RenderSystemPrompt"
+		renderWithRegistryFuncName = "RenderSystemPromptWithRegistry"
+		argsTypeName = "SystemPromptArgs"
+	}
+
+	data := &PromptData{
+		Expr:                       p,
+		ID:                         id,
+		AgentID:                    agentID,
+		ConstantName:               constantName,
+		SpecFuncName:               specFuncName,
+		RenderFuncName:             renderFuncName,
+		RenderWithRegistryFuncName: renderWithRegistryFuncName,
+		ArgsTypeName:               argsTypeName,
+		Name:                       name,
+		GoName:                     goName,
+		Description:                p.Description,
+		Role:                       string(p.Role),
+		Template:                   p.Template,
+		Version:                    version,
+	}
+
+	if p.Args != nil && p.Args.Type != nil && p.Args.Type != goaexpr.Empty {
+		data.HasArgs = true
+		scope := codegen.NewNameScope()
+		data.ArgsDef = scope.GoTypeDef(p.Args, false, true)
+		exampleIdentity := goaexpr.UserTypeExampleIdentity(&goaexpr.UserTypeExpr{
+			TypeName:      argsTypeName,
+			AttributeExpr: p.Args,
+		})
+		var api *goaexpr.APIExpr
+		if goaexpr.Root != nil {
+			api = goaexpr.Root.API
+		}
+		schema, err := jsonschema.Build(api, p.Args, exampleIdentity)
+		if err != nil {
+			return nil, fmt.Errorf("build JSON schema for prompt %q args: %w", id, err)
+		}
+		data.SchemaJSON = schema
+	}
+
+	return data, nil
 }
 
 // Naming helpers moved to codegen/naming.

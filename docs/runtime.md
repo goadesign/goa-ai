@@ -1092,55 +1092,139 @@ Temporal queue-wait and liveness behavior on
 
 ### Prompt Registry and Overrides
 
+See [Composable Prompt Management](prompts.md) for the complete guide.
+
 The runtime always initializes `Runtime.PromptRegistry`. Prompt management has two layers:
 
-- **Baseline specs**: register immutable `prompt.PromptSpec` definitions in memory.
-- **Scoped overrides**: optionally resolve workspace/session overrides through `prompt.Store`
-  (`runtime.WithPromptStore(...)`).
+- **Baseline specs**: immutable `prompt.PromptSpec` definitions registered in memory.
+- **Scoped overrides**: optional session-, tenant-, or environment-scoped overrides stored in a `prompt.Store` (`runtime.WithPromptStore(...)`).
+
+#### Baseline Registration
+
+Baseline prompts are registered automatically from generated code or manually:
+
+1. **Automatic Agent Prompts**: Agents declared with `SystemPrompt` or `Prompt` generate `PromptSpecs()` in `gen/<svc>/agents/<agent>/prompts.go`. In `Register<Agent>Agent` (or `rt.RegisterAgent`), the runtime preflights all specs with `rt.PromptRegistry.ValidateSpecs` before registering workflows and activities with `rt.Engine`, then installs each spec via `rt.PromptRegistry.Register(spec)` and publishes the agent into the runtime maps (sequentially, without a cross-engine transaction). Duplicate prompt IDs return `prompt.ErrDuplicatePromptSpec`.
+2. **Service-Level Prompts**: Shared prompts declared on services generate `gen/<svc>/prompts/prompts.go`. Applications register them once at startup:
+   ```go
+   import "myproject/gen/support/prompts"
+
+   if err := prompts.RegisterPrompts(rt.PromptRegistry); err != nil {
+       panic(err)
+   }
+   ```
+3. **Manual Registration**: Applications can also register baseline specs directly:
+   ```go
+   if err := rt.PromptRegistry.Register(prompt.PromptSpec{
+       ID:       "assistant.system",
+       AgentID:  "assistant",
+       Role:     prompt.PromptRoleSystem,
+       Template: "You are {{ .AssistantName }}.",
+   }); err != nil {
+       return err
+   }
+   ```
+
+#### Scoped Overrides and Store Lifecycle
+
+To support runtime prompt iteration, A/B experiments, or tenant customizations without redeploying code, configure a `prompt.Store`:
 
 ```go
 import (
     promptmongo "goa.design/goa-ai/features/prompt/mongo"
     clientmongo "goa.design/goa-ai/features/prompt/mongo/clients/mongo"
     "goa.design/goa-ai/runtime/agent/prompt"
+    "goa.design/goa-ai/runtime/agent/runtime"
 )
 
-mongoClient, _ := clientmongo.New(clientmongo.Options{
+mongoClient, err := clientmongo.New(clientmongo.Options{
     Client:     rawMongoClient,
     Database:   "assistant_runtime",
     Collection: "prompt_overrides",
 })
-promptStore, _ := promptmongo.NewStore(mongoClient)
+if err != nil {
+    return err
+}
+promptStore, err := promptmongo.NewStore(mongoClient)
+if err != nil {
+    return err
+}
 
 rt := runtime.New(
     runtimeStore,
     runtime.WithPromptStore(promptStore),
 )
-
-_ = rt.PromptRegistry.Register(prompt.PromptSpec{
-    ID:       "assistant.system",
-    AgentID:  "assistant",
-    Role:     prompt.PromptRoleSystem,
-    Template: "You are {{ .AssistantName }}.",
-})
 ```
 
-Rendering returns text and a versioned `PromptRef`; it never writes runtime
-storage. When a `prompt.RenderRecorder` is present in the context, every
-successful render also records one `prompt.RenderEvent` containing the resolved
-prompt ID, version, and scope. Failed renders record nothing.
-`RenderRecorder.Events` returns completed renders in stable prompt ID, version,
-session, and scope order. Concurrent completion order therefore cannot change
-the exact workflow start request.
+The registry provides lifecycle methods for managing overrides:
 
-Planners normally call `PlannerContext.RenderPrompt(...)`. The runtime supplies
-the recorder, returns its events with the accepted planner activity result, and
-then stores them as `PromptRendered` records from workflow history. Copy the
-returned `PromptRef` into the model request as described under [Model
-Clients](#model-clients).
+- **`ValidateOverride(id, templateSource)`**: Parses the override template and checks field accesses against the registered `PromptSpec.ArgsType` (`reflect.Type`). Untyped manual prompts (`spec.ArgsType == nil`) validate template syntax and declared `Funcs` only.
+- **`SetOverride(ctx, id, scope, templateSource, metadata)`**: Validates the template before persisting it to the store.
+- **`Resolve(ctx, id, scope)`**: Returns the baseline `PromptSpec` and highest-precedence active `*Override` (or `nil` when baseline is active).
+  - An override applies when its `SessionID` (if non-empty) equals the request's `SessionID`, and every label key in the override exists on the request with the same value.
+  - When multiple overrides apply: (1) an override with a `SessionID` beats one without; (2) otherwise, the override with more labels wins; (3) otherwise, the newer override (`CreatedAt`) wins.
+- **`ResetOverride(ctx, id, scope)`**: Destructively removes stored override records matching the exact `(id, scope)` pair in the store. Subsequent resolutions fall back to the next applicable less-specific override or baseline spec.
+- **`History(ctx, id)`**: Returns all remaining stored override records for `id`, ordered newest-first.
 
-Callers that render text before `Start` must carry the recorded events with the
-same run input that contains that text:
+#### The Exact-Scope Destructive Reset Contract
+
+`ResetOverride` and `Store.Reset` permanently delete all stored override records matching the **exact** `(promptID, scope)` pair (`SessionID` and exact `Labels` key/value map, including empty, dotted, or `$`-prefixed label keys). Subsequent resolutions for that exact scope fall back to the next applicable less-specific scoped override or baseline spec, and `History` returns only the remaining records.
+
+#### Rendering, Provenance, and Atomic Event Recording
+
+Rendering returns rendered text, the root prompt's `PromptRef`, and `Refs` containing the root and all composed sub-prompts in composition encounter order; it never writes runtime storage.
+
+When a `prompt.RenderRecorder` is present in the context, every successful top-level render records `prompt.RenderEvent` records containing the resolved prompt ID, version, and scope. **A failed render (or failed sub-prompt in a composition chain) records nothing**—event recording is atomic on top-level success.
+
+##### Ordering Distinction: Request Provenance vs. Event Audit
+
+There is an intentional ordering distinction between request provenance, recorded audit events, and run record resolution:
+- **`PromptContent.Refs`**: Preserves **composition encounter order** (`[rootPrompt, ...childPrompts]`), reflecting the structural hierarchy of how the prompt was assembled for the model.
+- **`RenderRecorder.Events()`**: Sorted **canonically by `(PromptID, Version, SessionID, Scope)`**. Canonical sorting ensures that concurrent sub-prompt evaluation or parallel tool rendering cannot alter workflow start identity or create non-deterministic run replay hashes.
+- **`Runtime.ResolvePromptRefs(ctx, sessionID, runID)`**: Returns unique `PromptRef`s in **run-log and parent/child run traversal order**, reconstructing prompt history breadth-first across the execution graph without sorting by prompt ID.
+
+#### Rendering in Planners
+
+Planners call `PlannerContext.RenderPrompt(...)` or generated typed helpers like `RenderSystemPrompt(ctx, in.Agent, args)`. To avoid cross-request contamination when a planner makes multiple model calls in one turn, `PlannerContext.RenderPrompt` does **not** stage mutable prompt references on the planner context. Instead, callers copy `content.Refs` directly onto the `model.Request.PromptRefs` for the model request containing that text:
+
+```go
+systemContent, err := genagent.RenderSystemPrompt(ctx, in.Agent, genagent.SystemPromptArgs{
+    AssistantName: "Ops Assistant",
+})
+if err != nil {
+    return nil, err
+}
+
+messages := []*model.Message{{
+    Role:  model.ConversationRoleSystem,
+    Parts: []model.Part{model.TextPart{Text: systemContent.Text}},
+}}
+messages = append(messages, in.Messages...)
+
+mc, ok := in.Agent.PlannerModelClient("anthropic")
+if !ok {
+    return nil, errors.New("model client anthropic is not configured")
+}
+
+sum, err := mc.Stream(ctx, &model.Request{
+    Messages:   messages,
+    Tools:      in.Agent.AdvertisedToolDefinitions(),
+    PromptRefs: systemContent.Refs,
+    Stream:     true,
+})
+if err != nil {
+    return nil, err
+}
+if len(sum.ToolCalls) > 0 {
+    return &planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
+}
+return &planner.PlanResult{FinalResponse: sum.FinalResponse()}, nil
+```
+
+The runtime carries recorded turn events with the accepted planner activity result and stores them as `PromptRendered` records in workflow history.
+
+#### Pre-Start Rendering Outside Planners
+
+Callers that render text before `Start` must carry the recorded events with the same run input that contains that text:
 
 ```go
 recorder := prompt.NewRenderRecorder()
@@ -1154,10 +1238,12 @@ messages := []*model.Message{{
     Role:  model.ConversationRoleSystem,
     Parts: []model.Part{model.TextPart{Text: content.Text}},
 }}
-_, err = client.Start(ctx, sessionID, messages,
+if _, err := client.Start(ctx, sessionID, messages,
     runtime.WithRunID(runID),
     runtime.WithRenderedPrompts(recorder.Events()),
-)
+); err != nil {
+    return err
+}
 ```
 
 `WithRenderedPrompts` is for initial input whose rendered text is already in
@@ -6792,9 +6878,15 @@ if err != nil {
     return nil, err
 }
 
+messages := []*model.Message{{
+    Role:  model.ConversationRoleSystem,
+    Parts: []model.Part{model.TextPart{Text: content.Text}},
+}}
+messages = append(messages, input.Messages...)
+
 resp, err := modelClient.Complete(ctx, &model.Request{
-    Messages:   input.Messages,
-    PromptRefs: []prompt.PromptRef{content.Ref},
+    Messages:   messages,
+    PromptRefs: content.Refs,
 })
 ```
 

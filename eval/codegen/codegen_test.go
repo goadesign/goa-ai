@@ -5,6 +5,7 @@ package codegen_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"maps"
@@ -81,6 +82,156 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	assert.Contains(t, example, "judge.New(client, maxOutputTokens)")
 	assert.Contains(t, example, "per-response output-token limit; handle its returned error first.")
 	assert.Contains(t, example, "json.NewEncoder(os.Stdout)")
+}
+
+func TestQABC70EvalExtend(t *testing.T) {
+	roots := runDesign(t, func() {
+		base := goadsl.Type("Base", func() {
+			goadsl.Attribute("query", goadsl.String, "Required query")
+			goadsl.Required("query")
+		})
+		evaldsl.Suite("qa", func() {
+			goadsl.Description("QA suite")
+			goadsl.Timeout("30s")
+			evaldsl.Scenario("example", func() {
+				goadsl.Description("QA example")
+				evaldsl.Input(func() {
+					goadsl.Extend(base)
+				})
+			})
+		})
+	})
+	input := evaluationRootForTest(t, roots).Suites[0].Scenarios[0].Input
+	require.NotNil(t, input)
+	obj := goaexpr.AsObject(input.Type)
+	require.NotNil(t, obj)
+	assert.NotEmpty(t, *obj)
+	assert.NotNil(t, input.Find("query"))
+	files := generateEvalFiles(t, roots, false)
+	require.NotEmpty(t, files)
+	content := render(t, files[0])
+	assert.Contains(t, content, "ExampleInput")
+	assert.Contains(t, content, "Query")
+}
+
+// TestReview24EvalNestedExtend checks both the saved input and emitted validator.
+func TestReview24EvalNestedExtend(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		t.Run(map[bool]string{false: "top_level", true: "nested_inline"}[nested], func(t *testing.T) {
+			roots := runDesign(t, func() {
+				base := goadsl.Type("QueryBase", func() {
+					goadsl.Attribute("query", goadsl.String, "Required query", func() { goadsl.MinLength(2) })
+					goadsl.Required("query")
+				})
+				derived := goadsl.Type("QueryDerived", func() { goadsl.Extend(base) })
+				evaldsl.Suite("shape_review", func() {
+					goadsl.Description("Checks query input")
+					goadsl.Timeout("30s")
+					evaldsl.Scenario("query", func() {
+						goadsl.Description("Runs a query")
+						evaldsl.Input(func() {
+							if nested {
+								goadsl.Attribute("nested", &goaexpr.Object{}, "Nested query", func() { goadsl.Extend(derived) })
+								goadsl.Required("nested")
+							} else {
+								goadsl.Extend(derived)
+							}
+						})
+					})
+				})
+			})
+			input := evaluationRootForTest(t, roots).Suites[0].Scenarios[0].Input
+			att := input
+			if nested {
+				att = input.Find("nested")
+			}
+			require.NotNil(t, att)
+			assert.NotNil(t, att.Find("query"), "required inherited field must survive finalization")
+			assert.Contains(t, att.AllRequired(), "query")
+			files := generateEvalFiles(t, roots, false)
+			require.Len(t, files, 1)
+			content := render(t, files[0])
+			assert.Contains(t, content, "Query string")
+			assert.Contains(t, content, "utf8.RuneCountInString")
+		})
+	}
+}
+
+// TestReviewF603EvalRecursiveExtend executes the emitted validators for both
+// sibling orders using the same public JSON input and expected length boundary.
+func TestReviewF603EvalRecursiveExtend(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "recursive_first", true: "nested_first"}[reverse], func(t *testing.T) {
+			roots := runDesign(t, func() {
+				base := goadsl.Type("Base", func() {
+					goadsl.Attribute("query", goadsl.String, "Query", func() { goadsl.MinLength(2) })
+					goadsl.Required("query")
+				})
+				derived := goadsl.Type("Derived", func() { goadsl.Extend(base) })
+				node := goadsl.Type("Node", func() {
+					if !reverse {
+						goadsl.Attribute("other", "Other", "Other node")
+					}
+					goadsl.Attribute("nested", &goaexpr.Object{}, "Nested query", func() { goadsl.Extend(derived) })
+					goadsl.Required("nested")
+					if reverse {
+						goadsl.Attribute("other", "Other", "Other node")
+					}
+				})
+				goadsl.Type("Other", func() { goadsl.Attribute("node", node, "Node") })
+				evaldsl.Suite("recursive", func() {
+					goadsl.Description("Recursive inputs")
+					goadsl.Timeout("1s")
+					evaldsl.Scenario("query", func() {
+						goadsl.Description("Query")
+						evaldsl.Input(func() {
+							goadsl.Attribute("root", node, "Root")
+							goadsl.Required("root")
+						})
+					})
+				})
+			})
+			files := generateEvalFiles(t, roots, false)
+			require.Len(t, files, 1)
+			content := render(t, files[0])
+			t.Logf("BEGIN GENERATED SUITE\n%s\nEND GENERATED SUITE", content)
+			root := t.TempDir()
+			repoRoot, err := filepath.Abs("../..")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(fmt.Sprintf("module example.com/project\n\ngo 1.27.3\n\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => %s\n", repoRoot)), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "suite.go"), []byte(content), 0o600))
+			testSource := `package recursive
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestGeneratedValidators(t *testing.T) {
+	for _, query := range []string{"", "a", "ab", "abc"} {
+		var input QueryInput
+		if err := json.Unmarshal([]byte("{\"root\":{\"nested\":{\"query\":\""+query+"\"}}}"), &input); err != nil {
+			t.Fatal(err)
+		}
+		err := ValidateQueryInput(&input)
+		t.Logf("query=%q validation_error=%v", query, err)
+		if (err != nil) != (len(query) < 2) {
+			t.Errorf("query=%q: want invalid=%t got %v", query, len(query) < 2, err)
+		}
+	}
+}
+`
+			require.NoError(t, os.WriteFile(filepath.Join(root, "suite_test.go"), []byte(testSource), 0o600))
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-v", "-timeout=20s", ".")
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "CI=true", "GOWORK=off")
+			out, err := cmd.CombinedOutput()
+			t.Log(string(out))
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
@@ -514,6 +665,48 @@ func TestEvalExamplePlanUsesPackageNamesChosenAfterPlanning(t *testing.T) {
 	assert.Contains(t, content, "func run2(ctx context.Context, opts options2) error")
 	assert.Contains(t, content, "func scenarioInputs2() genevalclaimed.Inputs2")
 	assert.Contains(t, content, "genevalclaimed.New2(&hooks2{}, scenarioInputs2())")
+}
+
+// TestReviewBeaeEvalSharedSources preserves shared defaults and repeated scenario preparation.
+func TestReviewBeaeEvalSharedSources(t *testing.T) {
+	var base goaexpr.UserType
+	runDesign(t, func() {
+		base = goadsl.Type("Base", func() {
+			goadsl.Attribute("query", goadsl.String, "Base query", func() { goadsl.MinLength(2) })
+			goadsl.Required("query")
+		})
+		ref := goadsl.Type("Ref", func() {
+			goadsl.Attribute("query", goadsl.String, "Reference query", func() { goadsl.Default("ref-default") })
+		})
+		evaldsl.Suite("review", func() {
+			goadsl.Description("Input control")
+			goadsl.Timeout("1s")
+			evaldsl.Scenario("mixed", func() {
+				goadsl.Description("Mixed input")
+				evaldsl.Input(func() {
+					goadsl.Reference(ref)
+					goadsl.Extend(base)
+					goadsl.Attribute("query", goadsl.String, "Consumer query")
+				})
+			})
+			evaldsl.Scenario("plain", func() {
+				goadsl.Description("Plain input")
+				evaldsl.Input(base)
+			})
+		})
+	})
+	for _, s := range evalexpr.Root.Suites[0].Scenarios {
+		for range 3 {
+			s.Prepare()
+			s.Finalize()
+		}
+		q := s.Input.Find("query")
+		require.NotNil(t, q)
+		assert.Nil(t, q.DefaultValue)
+		assert.Equal(t, 2, *q.Validation.MinLength)
+		assert.True(t, s.Input.IsRequired("query"))
+	}
+	assert.Nil(t, base.Attribute().Find("query").DefaultValue)
 }
 
 // generateEvalFiles records the suite files, chooses every package-level Go

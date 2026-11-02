@@ -53,6 +53,13 @@ func generateAgentFiles(data *GeneratorData, roots []eval.Root, specsPlan *toolS
 		bindingsByAgent[id] = append(bindingsByAgent[id], binding)
 	}
 	for _, svc := range data.Services {
+		if len(svc.Prompts) > 0 {
+			sfiles, err := servicePromptsFiles(svc)
+			if err != nil {
+				return nil, err
+			}
+			generated = append(generated, sfiles...)
+		}
 		for _, agent := range svc.Agents {
 			afiles, err := agentFiles(agent, aggregates, bindingsByAgent[agent.ID])
 			if err != nil {

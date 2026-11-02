@@ -12,6 +12,7 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 
 	agentexpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/dslshape"
 )
 
 type (
@@ -159,6 +160,13 @@ func (s *ScenarioExpr) EvalName() string {
 	return fmt.Sprintf("scenario %q in suite %q", s.Name, s.Suite.Name)
 }
 
+// Prepare materializes Extend-composed fields on scenario inputs before validation.
+func (s *ScenarioExpr) Prepare() {
+	if s.Input != nil {
+		dslshape.Finalize(s.Input)
+	}
+}
+
 // Validate enforces the scenario input and descriptive contracts.
 func (s *ScenarioExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
@@ -181,6 +189,13 @@ func (s *ScenarioExpr) Validate() error {
 		tags[tag] = struct{}{}
 	}
 	return verr
+}
+
+// Finalize ensures input attributes are finalized before code generation.
+func (s *ScenarioExpr) Finalize() {
+	if s.Input != nil {
+		dslshape.Finalize(s.Input)
+	}
 }
 
 // SetDescription implements expr.DescriptionHolder.

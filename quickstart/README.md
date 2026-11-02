@@ -138,6 +138,62 @@ the full agent loop deterministically, with no model or external service:
 - The bootstrap registers the executor with the generated
   `RegisterUsedToolsets` helper, which fails fast when an executor is missing.
 
+### Composable System Prompts (Optional)
+
+Agents can declare baseline system instructions directly in `design/` using `SystemPrompt`:
+
+```go
+Agent("chat", "Friendly Q&A assistant", func() {
+    SystemPrompt("You are {{ .AssistantName }}. Answer user questions accurately.", func() {
+        Args(func() {
+            Attribute("assistant_name", String, "Display name of the assistant")
+            Required("assistant_name")
+        })
+    })
+    // ...
+})
+```
+
+Re-running `goa gen example.com/quickstart/design` validates template field references against declared `Args` at compile time and emits `gen/orchestrator/agents/chat/prompts.go`.
+
+When connecting a real model in `internal/agents/chat/planner/planner.go`, call the generated `RenderSystemPrompt` helper in `PlanStart` and `PlanResume`:
+
+```go
+system, err := chat.RenderSystemPrompt(ctx, in.Agent, chat.SystemPromptArgs{
+    AssistantName: "Chat Bot",
+})
+if err != nil {
+    return nil, err
+}
+
+messages := []*model.Message{{
+    Role:  model.ConversationRoleSystem,
+    Parts: []model.Part{model.TextPart{Text: system.Text}},
+}}
+messages = append(messages, in.Messages...)
+
+mc, ok := in.Agent.PlannerModelClient("bedrock")
+if !ok {
+    return nil, errors.New("model client bedrock is not configured")
+}
+
+sum, err := mc.Stream(ctx, &model.Request{
+    Messages:   messages,
+    Tools:      in.Agent.AdvertisedToolDefinitions(),
+    PromptRefs: system.Refs, // Provenance for OTel tracing
+    Stream:     true,
+})
+if err != nil {
+    return nil, err
+}
+if len(sum.ToolCalls) > 0 {
+    return &planner.PlanResult{ToolCalls: sum.ToolCalls}, nil
+}
+return &planner.PlanResult{FinalResponse: sum.FinalResponse()}, nil
+```
+
+See [Composable Prompt Management](../docs/prompts.md) for the full guide.
+
 ### Typed Direct Completion
 
 Tools are for callable capabilities. When you want the assistant to return a

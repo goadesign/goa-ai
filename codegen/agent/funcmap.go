@@ -3,6 +3,7 @@
 package codegen
 
 import (
+	"fmt"
 	"strings"
 
 	goacodegen "goa.design/goa/v3/codegen"
@@ -18,6 +19,7 @@ func templateFuncMap() map[string]any {
 		"resultHintTemplate": resultHintTemplate,
 		"goify":              goacodegen.Goify,
 		"nativeTaskDispatch": nativeTaskDispatchSource,
+		"promptRoleTitle":    promptRoleTitle,
 		"trimPrefix":         strings.TrimPrefix,
 		"trimSuffix":         strings.TrimSuffix,
 		"ToLower":            strings.ToLower,
@@ -152,5 +154,21 @@ func isSimpleAttr(a *goaexpr.AttributeExpr) bool {
 		return false
 	default:
 		return false
+	}
+}
+
+// promptRoleTitle returns the Go identifier fragment for a PromptRole.
+func promptRoleTitle(role string) string {
+	switch role {
+	case systemPromptName:
+		return "System"
+	case "user":
+		return "User"
+	case "tool":
+		return "Tool"
+	case "synthesis":
+		return "Synthesis"
+	default:
+		panic(fmt.Sprintf("unknown prompt role: %q", role))
 	}
 }

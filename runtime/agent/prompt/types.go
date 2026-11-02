@@ -8,6 +8,7 @@
 package prompt
 
 import (
+	"reflect"
 	"text/template"
 	"time"
 )
@@ -23,7 +24,7 @@ type (
 	PromptSpec struct {
 		// ID is the globally unique prompt identifier.
 		ID Ident
-		// AgentID identifies the owning agent.
+		// AgentID identifies the owning agent when the prompt is agent-scoped; empty for service-level or shared prompts.
 		AgentID string
 		// Role identifies how the prompt is used (system/user/tool/synthesis).
 		Role PromptRole
@@ -36,6 +37,11 @@ type (
 		Version string
 		// Funcs is the template function map used when rendering this prompt.
 		Funcs template.FuncMap
+		// ArgsType is the Go type of the template data contract when the prompt
+		// takes a Go template-data type (or reflect.TypeFor[struct{}]() for generated
+		// zero-argument prompts). When nil, the prompt accepts untyped/dynamic data
+		// and only template syntax is validated.
+		ArgsType reflect.Type
 	}
 
 	// PromptRef is a lightweight prompt identity attached to rendered outputs and
@@ -53,6 +59,8 @@ type (
 		Text string
 		// Ref identifies which prompt/version produced Text.
 		Ref PromptRef
+		// Refs lists the resolved prompt and any composed sub-prompts in render order.
+		Refs []PromptRef
 	}
 
 	// Scope constrains which prompt overrides apply to a render call.

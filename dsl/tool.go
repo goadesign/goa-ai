@@ -197,12 +197,15 @@ func Args(val any, args ...any) {
 		eval.TooManyArgError()
 		return
 	}
-	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
-	if !ok {
+	switch target := eval.Current().(type) {
+	case *agentsexpr.ToolExpr:
+		target.Args = toolDSL(target, "Args", val, args...)
+	case *agentsexpr.PromptExpr:
+		target.Args = promptDSL(target, "Args", val, args...)
+	default:
 		eval.IncompatibleDSL()
 		return
 	}
-	tool.Args = toolDSL(tool, "Args", val, args...)
 }
 
 // Return defines the output result schema for a tool. Use Return inside a Tool DSL
@@ -902,4 +905,9 @@ func toolDSL(m *agentsexpr.ToolExpr, suffix string, p any, args ...any) *goaexpr
 // completionDSL mirrors toolDSL for service-owned completion contracts.
 func completionDSL(c *agentsexpr.CompletionExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
 	return dslshape.Build(c.Name, suffix, p, args...)
+}
+
+// promptDSL mirrors toolDSL for prompt data shapes.
+func promptDSL(p *agentsexpr.PromptExpr, suffix string, val any, args ...any) *goaexpr.AttributeExpr {
+	return dslshape.Build(p.Name, suffix, val, args...)
 }

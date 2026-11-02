@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"goa.design/goa-ai/codegen/naming"
+	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -26,6 +27,9 @@ type RootExpr struct {
 	// Registries is the collection of all registry expressions defined
 	// in the design.
 	Registries []*RegistryExpr
+	// Prompts is the collection of all service-level prompt expressions not
+	// owned by an agent.
+	Prompts []*PromptExpr
 	// DisableAgentDocs controls whether agent-specific documentation
 	// generation is suppressed.
 	DisableAgentDocs bool
@@ -88,6 +92,14 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	walk(eval.ToExpressionSet(registryUses))
 	if len(r.Completions) > 0 {
 		walk(eval.ToExpressionSet(r.Completions))
+	}
+	var prompts []*PromptExpr
+	for _, agent := range r.Agents {
+		prompts = append(prompts, agent.Prompts...)
+	}
+	prompts = append(prompts, r.Prompts...)
+	if len(prompts) > 0 {
+		walk(eval.ToExpressionSet(prompts))
 	}
 
 	var groups eval.ExpressionSet
@@ -152,6 +164,7 @@ func (r *RootExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	r.validateSanitizedAgentSlugs(verr)
 	r.validateCompletionNames(verr)
+	r.validatePromptIDs(verr)
 	r.validateAgentToolsetReferences(verr)
 	r.validateAgentToolsetSources(verr)
 	r.validateServiceExportRoutes(verr)
@@ -236,6 +249,9 @@ func (r *RootExpr) Validate() error {
 	}
 	r.validateOwnerScopedToolsetSlugs(verr)
 
+	if len(verr.Errors) == 0 {
+		return nil
+	}
 	return verr
 }
 
@@ -436,6 +452,69 @@ func (r *RootExpr) validateCompletionNames(verr *eval.ValidationErrors) {
 			continue
 		}
 		slugs[slugKey] = completion
+	}
+}
+
+// validatePromptIDs verifies that all prompt IDs are globally unique across services and agents,
+// and enforces Go identifier uniqueness per owner.
+func (r *RootExpr) validatePromptIDs(verr *eval.ValidationErrors) {
+	prompts := make(map[string]*PromptExpr)
+	recordPrompt := func(p *PromptExpr) {
+		if p == nil {
+			return
+		}
+		id := string(p.ID())
+		if id == "" {
+			return
+		}
+		if other, dup := prompts[id]; dup {
+			verr.Add(p, "prompt ID %q duplicates prompt declared in %s", id, other.EvalName())
+			return
+		}
+		prompts[id] = p
+	}
+
+	for _, p := range r.Prompts {
+		recordPrompt(p)
+	}
+	for _, a := range r.Agents {
+		for _, p := range a.Prompts {
+			recordPrompt(p)
+		}
+	}
+
+	// Check Go identifier collisions for service prompts within the same service
+	servicePrompts := make(map[string]map[string]*PromptExpr)
+	for _, p := range r.Prompts {
+		if p == nil || p.Service == nil {
+			continue
+		}
+		svcName := p.Service.Name
+		if servicePrompts[svcName] == nil {
+			servicePrompts[svcName] = make(map[string]*PromptExpr)
+		}
+		goIdent := codegen.Goify(p.Name, true)
+		if other, dup := servicePrompts[svcName][goIdent]; dup {
+			verr.Add(p, "prompt %q in service %q generates Go identifier %q which duplicates prompt %q", p.Name, svcName, goIdent, other.Name)
+			continue
+		}
+		servicePrompts[svcName][goIdent] = p
+	}
+
+	// Check Go identifier collisions for agent prompts within the same agent
+	for _, a := range r.Agents {
+		agentPrompts := make(map[string]*PromptExpr)
+		for _, p := range a.Prompts {
+			if p == nil {
+				continue
+			}
+			goIdent := codegen.Goify(p.Name, true)
+			if other, dup := agentPrompts[goIdent]; dup {
+				verr.Add(p, "prompt %q on agent %q generates Go identifier %q which duplicates prompt %q", p.Name, a.Name, goIdent, other.Name)
+				continue
+			}
+			agentPrompts[goIdent] = p
+		}
 	}
 }
 

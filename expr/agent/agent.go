@@ -34,6 +34,8 @@ type (
 		// RunPolicy defines runtime execution and resource constraints
 		// for this agent.
 		RunPolicy *RunPolicyExpr
+		// Prompts contains all baseline prompt templates declared on this agent.
+		Prompts []*PromptExpr
 	}
 
 	// RegistryUseExpr consumes the current service toolsets from one registry.
@@ -86,6 +88,9 @@ func (a *AgentExpr) WalkSets(walk eval.SetWalker) {
 	if a.Exported != nil {
 		walk(eval.ExpressionSet{a.Exported})
 		walk(eval.ToExpressionSet(a.Exported.Toolsets))
+	}
+	if len(a.Prompts) > 0 {
+		walk(eval.ToExpressionSet(a.Prompts))
 	}
 }
 

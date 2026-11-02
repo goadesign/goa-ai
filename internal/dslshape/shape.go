@@ -83,7 +83,7 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 		numreqs = len(att.Validation.Required)
 	}
 	eval.Execute(customize, att)
-	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
+	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 && len(att.Bases) == 0 && len(att.References) == 0 {
 		att.Type = goaexpr.Empty
 	}
 	if original != nil && att.Validation != nil && len(att.Validation.Required) != numreqs {
@@ -92,4 +92,16 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 		}
 	}
 	return att
+}
+
+// Finalize finalizes att through Goa's attribute finalizer and collapses an
+// empty top-level object to goaexpr.Empty.
+func Finalize(att *goaexpr.AttributeExpr) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	att.Finalize()
+	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
+		att.Type = goaexpr.Empty
+	}
 }

@@ -324,6 +324,22 @@ func modelSpanAttrs(ctx context.Context, req *model.Request) []attribute.KeyValu
 	if req.MaxTokens > 0 {
 		attrs = append(attrs, telemetry.AttrGenAIRequestMaxTokens.Int(req.MaxTokens))
 	}
+	if len(req.PromptRefs) > 0 {
+		ids := make([]string, len(req.PromptRefs))
+		versions := make([]string, len(req.PromptRefs))
+		refs := make([]string, len(req.PromptRefs))
+		for i, ref := range req.PromptRefs {
+			ids[i] = ref.ID.String()
+			versions[i] = ref.Version
+			refs[i] = ref.ID.String() + "@" + ref.Version
+		}
+		attrs = append(
+			attrs,
+			telemetry.AttrGenAIPromptIDs.StringSlice(ids),
+			telemetry.AttrGenAIPromptVersions.StringSlice(versions),
+			telemetry.AttrGoaAIPromptRefs.StringSlice(refs),
+		)
+	}
 	return attrs
 }
 

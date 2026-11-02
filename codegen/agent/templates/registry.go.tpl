@@ -111,6 +111,9 @@ func {{ .PackageNames.RegistrationConstructor }}(rt *{{ .RuntimeAlias }}.Runtime
             },
 {{- end }}
         },
+{{- if .Prompts }}
+        PromptSpecs: PromptSpecs(),
+{{- end }}
     }, nil
 }
 

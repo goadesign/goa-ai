@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	grpcCodes "google.golang.org/grpc/codes"
@@ -109,6 +110,30 @@ func TestModelSpanAttrsRecordExactToolCatalog(t *testing.T) {
 			assert.Equal(t, test.wantNames, attrs["goa_ai.request.tool_names"].AsStringSlice())
 		})
 	}
+}
+
+func TestModelSpanAttrsRecordPromptRefs(t *testing.T) {
+	t.Parallel()
+
+	ctx := telemetry.WithGenAIContext(t.Context(), testGenAIContext())
+
+	attrsNoRefs := attrsByKey(modelSpanAttrs(ctx, &model.Request{
+		ModelClass: model.ModelClassDefault,
+	}))
+	_, hasIDs := attrsNoRefs["gen_ai.prompt.ids"]
+	assert.False(t, hasIDs)
+
+	attrs := attrsByKey(modelSpanAttrs(ctx, &model.Request{
+		ModelClass: model.ModelClassDefault,
+		PromptRefs: []prompt.PromptRef{
+			{ID: "agent.system", Version: "v1.0.0"},
+			{ID: "shared.guardrails", Version: "sha256:abc123"},
+		},
+	}))
+
+	assert.Equal(t, []string{"agent.system", "shared.guardrails"}, attrs["gen_ai.prompt.ids"].AsStringSlice())
+	assert.Equal(t, []string{"v1.0.0", "sha256:abc123"}, attrs["gen_ai.prompt.versions"].AsStringSlice())
+	assert.Equal(t, []string{"agent.system@v1.0.0", "shared.guardrails@sha256:abc123"}, attrs["goa_ai.prompt.refs"].AsStringSlice())
 }
 
 func TestModelErrorRecordsExactValidationCauseWithoutCapture(t *testing.T) {

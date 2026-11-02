@@ -289,6 +289,9 @@ type (
 		ExecuteToolActivityOptions engine.ActivityOptions
 		// Policy configures caps, time budgets, and missing-field behavior for the agent.
 		Policy RunPolicy
+		// PromptSpecs lists baseline prompt declarations owned by this agent.
+		// RegisterAgent validates and registers them in Runtime.PromptRegistry.
+		PromptSpecs []prompt.PromptSpec
 	}
 
 	// ToolsetRegistration holds the metadata and execution logic for a toolset.
@@ -1140,6 +1143,14 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := r.validateRegistryDeclarations(reg.Definition); err != nil {
 		return err
 	}
+	if len(reg.PromptSpecs) > 0 {
+		if r.PromptRegistry == nil {
+			return fmt.Errorf("%w: prompt registry is not configured", ErrInvalidConfig)
+		}
+		if err := r.PromptRegistry.ValidateSpecs(reg.PromptSpecs); err != nil {
+			return err
+		}
+	}
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
@@ -1215,6 +1226,12 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 			reg.ExecuteToolActivityOptions,
 			r.ExecuteToolActivity,
 		); err != nil {
+			return err
+		}
+	}
+
+	for _, spec := range reg.PromptSpecs {
+		if err := r.PromptRegistry.Register(spec); err != nil {
 			return err
 		}
 	}
