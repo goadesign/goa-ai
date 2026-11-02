@@ -335,36 +335,216 @@ func TestReviewA156SelfRecursiveShapes(t *testing.T) {
 	}
 }
 
-// TestReviewA156DeletionBoundary proves why deleting materialization alone loses fields today.
+// TestReviewA156DeletionBoundary verifies that dslshape.Finalize finalizes derived bases before merging.
 func TestReviewA156DeletionBoundary(t *testing.T) {
-	for _, useShape := range []bool{false, true} {
-		t.Run(map[bool]string{false: "pinned_Goa_only", true: "current_shape"}[useShape], func(t *testing.T) {
-			minimum := 2
-			base := &goaexpr.UserTypeExpr{
-				TypeName: "Base",
-				AttributeExpr: &goaexpr.AttributeExpr{
-					Type: &goaexpr.Object{
-						{Name: "query", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String, Validation: &goaexpr.ValidationExpr{MinLength: &minimum}}},
-					},
-					Validation: &goaexpr.ValidationExpr{Required: []string{"query"}},
-				},
-			}
-			derived := &goaexpr.UserTypeExpr{TypeName: "Derived", AttributeExpr: &goaexpr.AttributeExpr{Type: &goaexpr.Object{}, Bases: []goaexpr.DataType{base}}}
-			args := &goaexpr.AttributeExpr{Type: &goaexpr.Object{}, Bases: []goaexpr.DataType{derived}}
-			if useShape {
-				dslshape.Finalize(args)
-			} else {
-				args.Finalize()
-			}
-			query := args.Find("query")
-			t.Logf("query survives=%t required=%v", query != nil, args.AllRequired())
-			if useShape {
-				require.NotNil(t, query)
-				assert.Contains(t, args.AllRequired(), "query")
+	minimum := 2
+	base := &goaexpr.UserTypeExpr{
+		TypeName: "Base",
+		AttributeExpr: &goaexpr.AttributeExpr{
+			Type: &goaexpr.Object{
+				{Name: "query", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String, Validation: &goaexpr.ValidationExpr{MinLength: &minimum}}},
+			},
+			Validation: &goaexpr.ValidationExpr{Required: []string{"query"}},
+		},
+	}
+	derived := &goaexpr.UserTypeExpr{TypeName: "Derived", AttributeExpr: &goaexpr.AttributeExpr{Type: &goaexpr.Object{}, Bases: []goaexpr.DataType{base}}}
+	args := &goaexpr.AttributeExpr{Type: &goaexpr.Object{}, Bases: []goaexpr.DataType{derived}}
+	dslshape.Finalize(args)
+	query := args.Find("query")
+	require.NotNil(t, query)
+	assert.Contains(t, args.AllRequired(), "query")
+	assert.Equal(t, 2, *query.Validation.MinLength)
+}
+
+// TestReviewBeaeBaseValueCycle checks that a base's value reference cannot clear an unfinished consumer's inheritance.
+func TestReviewBeaeBaseValueCycle(t *testing.T) {
+	for _, shape := range []string{"object", "array", "map", "union"} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(shape+map[bool]string{false: "/recursive_first", true: "/nested_first"}[reverse], func(t *testing.T) {
+				err := runDSLWithError(t, func() {
+					ancestor := Type("Ancestor", func() {
+						Attribute("query", String, "Query", func() { MinLength(2) })
+						switch shape {
+						case "object":
+							Attribute("back", "Node", "Optional back reference")
+						case "array":
+							Attribute("back", ArrayOf("Node"), "Optional back references")
+						case "map":
+							Attribute("back", MapOf(String, "Node"), "Optional back references")
+						case "union":
+							OneOf("back", "Optional back reference", func() { Attribute("node", "Node", "Node branch") })
+						}
+						Required("query")
+					})
+					base := Type("Base", func() { Extend(ancestor) })
+					derived := Type("Derived", func() { Extend(base) })
+					node := Type("Node", func() {
+						recursive := func() { Attribute("self", "Node", "Optional self") }
+						if !reverse {
+							recursive()
+						}
+						Attribute("nested", &goaexpr.Object{}, "Nested query", func() { Extend(derived) })
+						if reverse {
+							recursive()
+						}
+					})
+					Service("support", func() { Prompt("main", func() { Template("ok"); Args(node) }) })
+				})
+				require.NoError(t, err)
+				p := agentsexpr.Root.Prompts[0]
+				for range 3 {
+					p.Prepare()
+					p.Finalize()
+				}
+				nested := p.Args.Find("nested")
+				require.NotNil(t, nested)
+				query := nested.Find("query")
+				require.NotNil(t, query, "Base.Query must reach the consumer even when Base has a value reference back to Node")
+				assert.True(t, nested.IsRequired("query"))
+				require.NotNil(t, query.Validation)
+				require.NotNil(t, query.Validation.MinLength)
 				assert.Equal(t, 2, *query.Validation.MinLength)
-			} else {
-				assert.Nil(t, query, "pinned Goa does not finalize the Derived base before merging it")
+			})
+		}
+	}
+}
+
+// TestReviewBeaeMultipleSources checks the existing precedence across two references, two bases and private described copies.
+func TestReviewBeaeMultipleSources(t *testing.T) {
+	for _, kind := range []string{"prompt", "tool_args", "tool_return", "completion", "goa_method"} {
+		t.Run(kind, func(t *testing.T) {
+			var base1, base2 goaexpr.UserType
+			err := runDSLWithError(t, func() {
+				base1 = Type("BaseOne", func() {
+					Attribute("query", String, "Base first", func() { Default("base-first"); MinLength(2) })
+					Required("query")
+				})
+				base2 = Type("BaseTwo", func() {
+					Attribute("query", String, "Base last", func() { Default("base-last"); MinLength(3) })
+					Attribute("second", String, "Second field")
+					Required("second")
+				})
+				ref1 := Type("RefOne", func() {
+					Attribute("query", String, "Reference first", func() { Default("ref-first") })
+					Attribute("reference_only", String, "Reference first", func() { Default("ref-first") })
+				})
+				ref2 := Type("RefTwo", func() {
+					Attribute("query", String, "Reference last", func() { Default("ref-last") })
+					Attribute("reference_only", String, "Reference last", func() { Default("ref-last") })
+				})
+				mixed := func() {
+					Reference(ref1)
+					Reference(ref2)
+					Extend(base1)
+					Extend(base2)
+					Attribute("query", String, "Consumer query")
+					Attribute("reference_only", String, "Reference value")
+				}
+				if kind == "tool_args" || kind == "tool_return" {
+					Toolset("queries", func() {
+						Tool("mixed", "Query", func() {
+							if kind == "tool_args" {
+								Args(mixed)
+								Return(base1)
+							} else {
+								Args(base1)
+								Return(mixed)
+							}
+						})
+					})
+					return
+				}
+				Service("support", func() {
+					switch kind {
+					case "prompt":
+						Prompt("main", func() { Template("ok"); Args(mixed) })
+						Prompt("described", func() { Template("ok"); Args(base1, "Private description") })
+						Prompt("plain", func() { Template("ok"); Args(base1) })
+					case "completion":
+						Completion("mixed", "Query", func() { Return(mixed) })
+					case "goa_method":
+						Method("mixed", func() { Payload(mixed) })
+					}
+				})
+			})
+			require.NoError(t, err)
+			var att *goaexpr.AttributeExpr
+			switch kind {
+			case "prompt":
+				for _, p := range agentsexpr.Root.Prompts {
+					for range 3 {
+						p.Prepare()
+						p.Finalize()
+					}
+				}
+				att = agentsexpr.Root.Prompts[0].Args
+				described := agentsexpr.Root.Prompts[1].Args
+				plain := agentsexpr.Root.Prompts[2].Args
+				assert.Equal(t, described.Type.(goaexpr.UserType).ID(), plain.Type.(goaexpr.UserType).ID())
+				assert.NotSame(t, described.Type, plain.Type)
+				assert.Equal(t, "Private description", described.Description)
+				assert.Equal(t, "base-first", plain.Find("query").DefaultValue)
+			case "tool_args", "tool_return":
+				tool := agentsexpr.Root.Toolsets[0].Tools[0]
+				for range 3 {
+					tool.Finalize()
+				}
+				att = tool.Args
+				if kind == "tool_return" {
+					att = tool.Return
+				}
+			case "completion":
+				c := agentsexpr.Root.Completions[0]
+				for range 3 {
+					c.Finalize()
+				}
+				att = c.Return
+			case "goa_method":
+				att = goaexpr.Root.Service("support").Methods[0].Payload
 			}
+			assert.Equal(t, "base-last", att.Find("query").DefaultValue)
+			assert.Equal(t, "ref-first", att.Find("reference_only").DefaultValue)
+			assert.Equal(t, "Base last", att.Find("query").Description)
+			require.NotNil(t, att.Find("query").Validation.MinLength)
+			assert.Equal(t, 3, *att.Find("query").Validation.MinLength)
+			assert.ElementsMatch(t, []string{"query", "second"}, att.AllRequired())
+			assert.Equal(t, "base-first", base1.Attribute().Find("query").DefaultValue)
+			assert.Equal(t, "base-last", base2.Attribute().Find("query").DefaultValue)
 		})
 	}
+}
+
+// TestReviewBeaeNestedReferenceSharedBase verifies that when a Reference target
+// itself uses Reference + Extend on a shared base and eval.RunDSL() runs full root
+// finalization, the shared base default remains nil.
+func TestReviewBeaeNestedReferenceSharedBase(t *testing.T) {
+	var sharedBase goaexpr.UserType
+	err := runDSLWithError(t, func() {
+		sharedBase = Type("SharedBase", func() {
+			Attribute("query", String, "Shared base query", func() { MinLength(2) })
+			Required("query")
+		})
+		refInner := Type("RefInner", func() {
+			Attribute("query", String, "Inner default", func() { Default("inner-default") })
+		})
+		refOuter := Type("RefOuter", func() {
+			Reference(refInner)
+			Extend(sharedBase)
+			Attribute("query", String, "Outer query")
+		})
+		Service("support", func() {
+			Prompt("main", func() {
+				Template("ok")
+				Args(func() {
+					Reference(refOuter)
+					Extend(sharedBase)
+					Attribute("query", String, "Main query")
+				})
+			})
+		})
+	})
+	require.NoError(t, err)
+	query := sharedBase.Attribute().Find("query")
+	require.NotNil(t, query)
+	assert.Nil(t, query.DefaultValue, "SharedBase default must remain nil after full root finalization")
 }

@@ -217,7 +217,8 @@ func (e *exprAttrType) Member(name string) (tmplcheck.Type, error) {
 			}
 			goName := codegen.GoifyAtt(nat.Attribute, nat.Name, true)
 			if goName == name {
-				return newExprAttrType(nat.Attribute), nil
+				isPtr := !curr.IsRequired(nat.Name) && curr.IsPrimitivePointer(nat.Name, true)
+				return newExprAttrTypeWithPointer(nat.Attribute, isPtr), nil
 			}
 		}
 		return nil, fmt.Errorf("%w: field %q not declared in Args", prompt.ErrTemplateFieldNotFound, name)
@@ -289,12 +290,53 @@ func (e *exprAttrType) Range(twoVars bool) (tmplcheck.Type, tmplcheck.Type, erro
 // newExprAttrType creates a tmplcheck.Type wrapping an attribute expression, returning nil
 // for unconstrained dynamic types (such as Any or struct:field:type overrides).
 func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {
+	return newExprAttrTypeWithPointer(att, false)
+}
+
+// newExprAttrTypeWithPointer creates a tmplcheck.Type wrapping an attribute expression,
+// mapping primitive types to their corresponding Go reflect.Type (pointer or value).
+func newExprAttrTypeWithPointer(att *goaexpr.AttributeExpr, isPointer bool) tmplcheck.Type {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
 	}
 	curr, dynamic := unwrapAttr(att)
 	if dynamic || curr == nil || curr.Type == nil || curr.Type == goaexpr.Any {
 		return nil
+	}
+	if prim, ok := curr.Type.(goaexpr.Primitive); ok {
+		var rt reflect.Type
+		switch prim.Kind() { //nolint:exhaustive // Only primitive data kinds map to Go types.
+		case goaexpr.BooleanKind:
+			rt = reflect.TypeFor[bool]()
+		case goaexpr.IntKind:
+			rt = reflect.TypeFor[int]()
+		case goaexpr.Int32Kind:
+			rt = reflect.TypeFor[int32]()
+		case goaexpr.Int64Kind:
+			rt = reflect.TypeFor[int64]()
+		case goaexpr.UIntKind:
+			rt = reflect.TypeFor[uint]()
+		case goaexpr.UInt32Kind:
+			rt = reflect.TypeFor[uint32]()
+		case goaexpr.UInt64Kind:
+			rt = reflect.TypeFor[uint64]()
+		case goaexpr.Float32Kind:
+			rt = reflect.TypeFor[float32]()
+		case goaexpr.Float64Kind:
+			rt = reflect.TypeFor[float64]()
+		case goaexpr.StringKind:
+			rt = reflect.TypeFor[string]()
+		case goaexpr.BytesKind:
+			rt = reflect.TypeFor[[]byte]()
+		default:
+			rt = nil
+		}
+		if rt != nil {
+			if isPointer && prim.Kind() != goaexpr.BytesKind {
+				rt = reflect.PointerTo(rt)
+			}
+			return tmplcheck.ReflectType(rt)
+		}
 	}
 	base := &exprAttrType{att: att}
 	if goaexpr.AsUnion(curr.Type) != nil {

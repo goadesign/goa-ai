@@ -667,6 +667,48 @@ func TestEvalExamplePlanUsesPackageNamesChosenAfterPlanning(t *testing.T) {
 	assert.Contains(t, content, "genevalclaimed.New2(&hooks2{}, scenarioInputs2())")
 }
 
+// TestReviewBeaeEvalSharedSources preserves shared defaults and repeated scenario preparation.
+func TestReviewBeaeEvalSharedSources(t *testing.T) {
+	var base goaexpr.UserType
+	runDesign(t, func() {
+		base = goadsl.Type("Base", func() {
+			goadsl.Attribute("query", goadsl.String, "Base query", func() { goadsl.MinLength(2) })
+			goadsl.Required("query")
+		})
+		ref := goadsl.Type("Ref", func() {
+			goadsl.Attribute("query", goadsl.String, "Reference query", func() { goadsl.Default("ref-default") })
+		})
+		evaldsl.Suite("review", func() {
+			goadsl.Description("Input control")
+			goadsl.Timeout("1s")
+			evaldsl.Scenario("mixed", func() {
+				goadsl.Description("Mixed input")
+				evaldsl.Input(func() {
+					goadsl.Reference(ref)
+					goadsl.Extend(base)
+					goadsl.Attribute("query", goadsl.String, "Consumer query")
+				})
+			})
+			evaldsl.Scenario("plain", func() {
+				goadsl.Description("Plain input")
+				evaldsl.Input(base)
+			})
+		})
+	})
+	for _, s := range evalexpr.Root.Suites[0].Scenarios {
+		for range 3 {
+			s.Prepare()
+			s.Finalize()
+		}
+		q := s.Input.Find("query")
+		require.NotNil(t, q)
+		assert.Nil(t, q.DefaultValue)
+		assert.Equal(t, 2, *q.Validation.MinLength)
+		assert.True(t, s.Input.IsRequired("query"))
+	}
+	assert.Nil(t, base.Attribute().Find("query").DefaultValue)
+}
+
 // generateEvalFiles records the suite files, chooses every package-level Go
 // name, and returns those files.
 func generateEvalFiles(
