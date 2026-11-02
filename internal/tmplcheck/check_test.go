@@ -30,6 +30,12 @@ type (
 	review09Collection struct {
 		id string
 	}
+
+	// authoredSliceType implements SliceType for testing custom collection adapters.
+	authoredSliceType struct {
+		id   string
+		elem Type
+	}
 )
 
 // ID returns the canonical type ID of the authored type.
@@ -66,6 +72,32 @@ func (r review09Collection) Index() (Type, error) {
 // Range returns the integer index and element contracts.
 func (r review09Collection) Range(bool) (Type, Type, error) {
 	return ReflectType(reflect.TypeFor[int]()), ReflectType(reflect.TypeFor[int]()), nil
+}
+
+// ID returns the canonical type ID of the authored slice type.
+func (s *authoredSliceType) ID() string { return s.id }
+
+// Member rejects fields because the represented value is a collection.
+func (s *authoredSliceType) Member(name string) (Type, error) {
+	return nil, fmt.Errorf("slice type %s has no field %s", s.id, name)
+}
+
+// Index returns the element Type.
+func (s *authoredSliceType) Index() (Type, error) {
+	if s.elem != nil {
+		return s.elem, nil
+	}
+	return nil, fmt.Errorf("not indexed")
+}
+
+// Range returns the integer index and element types.
+func (s *authoredSliceType) Range(bool) (Type, Type, error) {
+	return ReflectType(reflect.TypeFor[int]()), s.elem, nil
+}
+
+// Slice resolves the slice operation and reports that zero-index slicing preserves truth.
+func (s *authoredSliceType) Slice() (Type, bool) {
+	return s, true
 }
 
 type recursiveNode struct {
@@ -339,6 +371,45 @@ func TestReview09CustomSlice(t *testing.T) {
 			t.Logf("known=%t truth=%t Go=%v output=%q", known, truth, oracle, out.String())
 			if oracle != nil {
 				t.Fatal(oracle)
+			}
+		})
+	}
+}
+
+// TestSliceTypePreservesTruth verifies that custom SliceType implementations preserve
+// known-true facts across zero-index slicing across direct, pipe, loop, and named forms,
+// as well as element indexing.
+func TestSliceTypePreservesTruth(t *testing.T) {
+	t.Parallel()
+
+	itemType := ReflectType(reflect.TypeFor[collisionA1]())
+	sliceAdapter := &authoredSliceType{
+		id:   "sliceAdapter",
+		elem: itemType,
+	}
+	root := &authoredType{
+		id: "root",
+		members: map[string]Type{
+			"Item":    itemType,
+			"Operand": sliceAdapter,
+		},
+	}
+
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"direct", `{{$x := .Item}}{{$v := or .Operand "fallback"}}{{if slice $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`},
+		{"pipe", `{{$x := .Item}}{{$v := or .Operand "fallback"}}{{if $v | slice}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`},
+		{"loop", `{{$x := .Item}}{{$v := or .Operand "fallback"}}{{range 2}}{{$v = slice $v}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`},
+		{"named", `{{define "n"}}{{$x := .Item}}{{$v := or .Operand "fallback"}}{{if slice $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "n" .}}`},
+		{"indexing", `{{(index (slice .Operand) 0).Label}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed := template.Must(template.New(tc.name).Parse(tc.src))
+			if err := Check(parsed, root, nil); err != nil {
+				t.Fatalf("expected template %q to pass, got: %v", tc.name, err)
 			}
 		})
 	}

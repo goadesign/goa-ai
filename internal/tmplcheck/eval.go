@@ -53,14 +53,13 @@ func evalCall(fnType Type) (Type, error) {
 //     always false.
 //   - After dereferencing, a fixed-size array [N]T always slices to length N,
 //     whose truth is N > 0.
-//   - tmplcheck.Type does not guarantee that a custom Type implementation is a
-//     non-pointer collection, so only direct reflected slices/strings
-//     (reflect.Slice, reflect.String), positive-length fixed arrays (reflect.Array
-//     with Len() > 0), and *multiType unions whose branches all preserve truth
-//     preserve a known-true input fact across a zero-index slice. Dynamic (nil)
-//     types, collection pointers, and custom Type implementations do not because
-//     a non-nil pointer to an empty collection is truthy before indirection and
-//     falsy after.
+//   - Direct reflected slices/strings (reflect.Slice, reflect.String), positive-length
+//     fixed arrays (reflect.Array with Len() > 0), SliceType implementations,
+//     and *multiType unions whose branches all preserve truth preserve a
+//     known-true input fact across a zero-index slice. Dynamic (nil) types,
+//     collection pointers, and custom Type implementations that do not implement
+//     SliceType return preservesTrue = false because a non-nil pointer to an empty
+//     collection is truthy before indirection and falsy after.
 func evalSlice(coll Type, numIdx int) Type {
 	clean := withoutKnownTruth(coll)
 	res, preservesTrue := sliceResultType(clean)
@@ -86,8 +85,8 @@ func evalSlice(coll Type, numIdx int) Type {
 //
 // Because tmplcheck.Type does not guarantee that custom Type implementations
 // are non-pointer collections, only direct reflected slices/strings,
-// positive-length fixed arrays, and *multiType unions whose branches all
-// preserve truth return preservesTrue = true.
+// positive-length fixed arrays, SliceType implementations, and *multiType unions
+// whose branches all preserve truth return preservesTrue = true.
 func sliceResultType(clean Type) (Type, bool) {
 	if clean == nil || isNilDataType(clean) {
 		return clean, false
@@ -124,6 +123,9 @@ func sliceResultType(clean Type) (Type, bool) {
 			}
 		}
 		return withoutKnownTruth(mergeTypeList(results)), allPreserve
+	}
+	if st, ok := clean.(SliceType); ok {
+		return st.Slice()
 	}
 	return clean, false
 }
