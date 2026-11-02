@@ -124,22 +124,39 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, has
 
 		case "slice":
 			var coll Type
+			numIdx := 0
 			if len(argTypes) >= 2 {
 				coll = argTypes[1]
+				numIdx = len(argTypes) - 2
+				if hasPiped {
+					numIdx++
+				}
 			} else if hasPiped {
 				coll = pipedVal
+				numIdx = 0
 			}
 			clean := withoutKnownTruth(coll)
+			var res Type
 			if rt, ok := clean.(*reflectType); ok {
 				cur := deref(rt.t)
 				if cur != nil {
 					if cur.Kind() == reflect.Array {
-						return ReflectType(reflect.SliceOf(cur.Elem())), nil
+						res = ReflectType(reflect.SliceOf(cur.Elem()))
+					} else {
+						res = ReflectType(cur)
 					}
-					return ReflectType(cur), nil
+				} else {
+					res = clean
+				}
+			} else {
+				res = clean
+			}
+			if numIdx == 0 {
+				if known, truth := staticTruth(nil, coll); known {
+					return withKnownTruth(res, truth), nil
 				}
 			}
-			return coll, nil
+			return res, nil
 
 		case "call":
 			var fnType Type

@@ -1,3 +1,5 @@
+// Package prompt provides prompt template registration, evaluation, and rendering.
+// This file tests review items for flow sensitivity, reflection boxing, and cycle limits.
 package prompt
 
 import (
@@ -364,5 +366,115 @@ func TestReview13Reflection(t *testing.T) {
 				t.Errorf("invalid override executed witness=%d", renderCalls)
 			}
 		})
+	}
+}
+
+// TestReview8722FreshDynamicPropagation checks dynamic type, truth, and side effects at all source entries.
+func TestReview8722FreshDynamicPropagation(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		source string
+		accept bool
+		funcs  template.FuncMap
+	}{
+		{"merge_true", `{{$x := .Item}}{{$v := .Dynamic}}{{if .Flag}}{{$v = or .Dynamic true}}{{else}}{{$v = or .Other "yes"}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
+		{"merge_false", `{{$x := .Item}}{{$v := .Dynamic}}{{if .Flag}}{{$v = and .Dynamic false}}{{else}}{{$v = and .Other ""}}{{end}}{{if $v}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
+		{"merge_unknown", `{{$x := .Item}}{{$v := .Dynamic}}{{if .Flag}}{{$v = or .Dynamic true}}{{else}}{{$v = and .Other false}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, nil},
+		{"named_dynamic_true", `{{define "t"}}{{$x := item}}{{if $}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "t" (or .Dynamic true)}}`, true, nil},
+		{"named_dynamic_false", `{{define "t"}}{{$x := item}}{{if $}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "t" (and .Dynamic false)}}`, true, nil},
+		{"loop_dynamic_true", `{{$x := .Item}}{{$v := or .Dynamic true}}{{range 4}}{{$v = not $v}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
+		{"loop_dynamic_false_continue", `{{$x := .Item}}{{$v := and .Dynamic false}}{{range 5}}{{$v = not $v}}{{continue}}{{$v = not $v}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
+		{"loop_dynamic_break", `{{$x := .Item}}{{$v := or .Dynamic true}}{{range 4}}{{$v = not $v}}{{break}}{{end}}{{if $v}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
+		{"custom_not_not_constant", `{{$x := .Item}}{{if not (or .Dynamic true)}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, template.FuncMap{"not": func(any) bool { return true }}},
+		{"dynamic_slice_truth_not_assumed", `{{$x := .Item}}{{$v := or .Dynamic true}}{{if slice $v 0 0}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, nil},
+		{"dynamic_slice_no_indices_preserves_truth", `{{$x := .Item}}{{$v := or .Dynamic true}}{{if slice $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			type item struct{ Label string }
+			type data struct {
+				Item    item
+				Dynamic any
+				Other   any
+				Flag    bool
+			}
+			d := data{Item: item{"ok"}, Dynamic: []int{1}, Other: false, Flag: true}
+			if c.name == "dynamic_slice_truth_not_assumed" || c.name == "dynamic_slice_no_indices_preserves_truth" {
+				d.Dynamic = []int{1}
+			}
+			calls := 0
+			funcs := template.FuncMap{
+				"witness": func() string { calls++; return "" },
+				"item":    func() item { return d.Item },
+			}
+			for k, v := range c.funcs {
+				funcs[k] = v
+			}
+			src := `{{witness}}` + c.source
+			spec := PromptSpec{ID: "fresh8722", Role: PromptRoleSystem, Template: src, ArgsType: reflect.TypeOf(d), Funcs: funcs}
+			errs := make([]error, 0, 3)
+			errs = append(errs, ValidatePromptTemplate(spec, src), NewRegistry(nil).Register(spec))
+			store := NewInMemoryStore()
+			reg := NewRegistry(store)
+			base := spec
+			base.Template = "base"
+			if err := reg.Register(base); err != nil {
+				t.Fatal(err)
+			}
+			errs = append(errs, reg.ValidateOverride(spec.ID, src))
+			if calls != 0 {
+				t.Fatal("validation ran witness")
+			}
+			if err := store.Set(context.Background(), spec.ID, Scope{}, src, nil); err != nil {
+				t.Fatal(err)
+			}
+			content, render := reg.Render(context.Background(), spec.ID, Scope{}, d)
+			renderCalls := calls
+			oracle := template.Must(template.New("oracle").Option("missingkey=error").Funcs(funcs).Parse(src))
+			var out bytes.Buffer
+			exec := oracle.Execute(&out, d)
+			t.Logf("source=%q static=%v render=%v calls=%d content=%v oracle=%v output=%q", src, errs, render, renderCalls, content, exec, out.String())
+			for _, err := range errs {
+				if (err == nil) != c.accept {
+					t.Errorf("accepted=%v want=%v err=%v", err == nil, c.accept, err)
+				}
+			}
+			if !c.accept && renderCalls != 0 {
+				t.Error("invalid raw override ran witness")
+			}
+			if c.accept && (exec != nil || render != nil || content.Text != out.String()) {
+				t.Error("valid execution does not match oracle")
+			}
+		})
+	}
+}
+
+// TestReview8722CounterField validates a compact counter whose final truth chooses a legal field.
+func TestReview8722CounterField(t *testing.T) {
+	t.Parallel()
+
+	var init, body strings.Builder
+	init.WriteString(`{{$x := .Item}}`)
+	for i := 0; i < 12; i++ {
+		fmt.Fprintf(&init, `{{$b%d := false}}`, i)
+	}
+	for i := 0; i < 12; i++ {
+		fmt.Fprintf(&body, `{{$b%d = not $b%d}}`, i, i)
+		if i < 11 {
+			fmt.Fprintf(&body, `{{if not $b%d}}`, i)
+		}
+	}
+	for i := 1; i < 12; i++ {
+		body.WriteString(`{{end}}`)
+	}
+	src := init.String() + `{{range 1000000000}}` + body.String() + `{{end}}{{if $b9}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`
+	// One billion modulo 4096 is 2560, whose bit 9 is true. Do not execute this template.
+	t.Logf("source_bytes=%d states=4096 source=%q", len(src), src)
+	type item struct{ Label string }
+	type data struct{ Item item }
+	if err := ValidatePromptTemplate(PromptSpec{ID: "counter-field", ArgsType: reflect.TypeFor[data]()}, src); err != nil {
+		t.Fatal(err)
 	}
 }
