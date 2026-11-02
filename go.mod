@@ -29,7 +29,7 @@ require (
 	go.temporal.io/sdk v1.50.0
 	go.temporal.io/sdk/contrib/opentelemetry v0.8.1
 	goa.design/clue v1.3.0
-	goa.design/goa/v3 v3.35.1-0.20261028010903-3d7ec7ca9b4e
+	goa.design/goa/v3 v3.35.1-0.20261102050328-55260d89602b
 	goa.design/pulse v1.10.3-0.20261006173751-4182b80d7cd4
 	golang.org/x/image v0.47.0
 	golang.org/x/oauth2 v0.37.0
@@ -146,5 +146,3 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e // indirect
 )
-
-replace goa.design/goa/v3 => /Users/raphael/src/goa-finalize-inheritance
