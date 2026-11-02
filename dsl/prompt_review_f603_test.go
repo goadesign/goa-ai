@@ -662,3 +662,31 @@ func TestNestedReferenceExtendPreservesBaseDefaultInPublicDSL(t *testing.T) {
 	assert.Nil(t, plain.Attribute().Find("query").DefaultValue, "separate Base consumer must not gain a reference default")
 	assert.Nil(t, child.Attribute().Find("settings").Find("options").Find("query").DefaultValue, "Extend retains precedence over Reference")
 }
+
+// TestPromptUndefinedNamedTemplateRejected verifies that compile-time prompt
+// validation rejects templates invoking an undefined local named template via
+// {{ template "missing" }} while accepting defined local named templates.
+func TestPromptUndefinedNamedTemplateRejected(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		Service("orders", func() {
+			Agent("refund", "Refund assistant", func() {
+				SystemPrompt(func() {
+					Template(`Hello {{ template "missing" }}.`)
+				})
+			})
+		})
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `template "missing" is not defined`)
+
+	err = runDSLWithError(t, func() {
+		Service("orders", func() {
+			Agent("refund", "Refund assistant", func() {
+				SystemPrompt(func() {
+					Template(`{{ define "sub" }}world{{ end }}Hello {{ template "sub" . }}.`)
+				})
+			})
+		})
+	})
+	require.NoError(t, err)
+}
