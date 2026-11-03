@@ -281,10 +281,10 @@ func TestE2EStreamGeneratedValidationRunsAfterRawGateway(t *testing.T) {
 	var outputErr *model.OutputValidationError
 	require.ErrorAs(t, err, &outputErr)
 	require.Equal(t,
-		"Tool call 1, input contract \"emit_tool\" (diagnostic identifier, not a callable tool name):\nThe previous tool call did not match its advertised input schema.",
+		"Tool call 1, input contract \"emit_tool\" (diagnostic identifier, not a callable tool name):\nField \"k\" must match its advertised input contract.",
 		outputErr.RecoveryCorrection(),
 	)
-	require.NotContains(t, outputErr.RecoveryCorrection(), `"k"`)
+	require.NotContains(t, outputErr.RecoveryCorrection(), "submitted k was v")
 	require.NotContains(t, outputErr.RecoveryCorrection(), `"v"`)
 	require.Equal(t, &model.TokenUsage{
 		InputTokens:  1,
