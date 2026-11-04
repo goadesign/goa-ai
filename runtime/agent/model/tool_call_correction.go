@@ -83,24 +83,40 @@ func toolFieldCorrection(err error, payload rawjson.Message, fields []tools.Fiel
 // codecToolCorrectionCandidates visits wrapped and joined codec rejections.
 // Only generated field metadata supplies names and descriptions to the model.
 func codecToolCorrectionCandidates(err error, fields []tools.FieldMetadata) []toolCorrectionCandidate {
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		causes := joined.Unwrap()
-		candidates := make([]toolCorrectionCandidate, 0, len(causes))
-		for _, cause := range causes {
-			candidates = append(candidates, codecToolCorrectionCandidates(cause, fields)...)
+	// Inspect this exact node so every error leaf contributes guidance or
+	// an omission notice, including typed-nil and empty validation errors.
+	//nolint:errorlint
+	failure, ok := err.(*tools.ValidationError)
+	if !ok {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			causes := joined.Unwrap()
+			if len(causes) == 0 {
+				return []toolCorrectionCandidate{{unsupported: true}}
+			}
+			candidates := make([]toolCorrectionCandidate, 0, len(causes))
+			for _, cause := range causes {
+				candidates = append(candidates, codecToolCorrectionCandidates(cause, fields)...)
+			}
+			return candidates
 		}
-		return candidates
+		if cause := errors.Unwrap(err); cause != nil {
+			return codecToolCorrectionCandidates(cause, fields)
+		}
+		return []toolCorrectionCandidate{{unsupported: true}}
 	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return codecToolCorrectionCandidates(wrapped.Unwrap(), fields)
-	}
-	var failure *tools.ValidationError
-	if !errors.As(err, &failure) {
+	if failure == nil {
 		return []toolCorrectionCandidate{{unsupported: true}}
 	}
 	issues := failure.Issues()
+	if len(issues) == 0 {
+		return []toolCorrectionCandidate{{unsupported: true}}
+	}
 	candidates := make([]toolCorrectionCandidate, 0, len(issues))
 	for _, issue := range issues {
+		if issue.Constraint == "unknown_field" {
+			candidates = append(candidates, toolCorrectionCandidate{unsupported: true})
+			continue
+		}
 		field, ok := tools.LookupFieldMetadata(fields, issue.Field)
 		// Codec issue paths may name submitted collection keys. Only
 		// generated names and unambiguous, non-union descriptions are safe

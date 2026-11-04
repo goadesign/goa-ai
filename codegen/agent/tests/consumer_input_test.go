@@ -291,10 +291,11 @@ import (
  "bytes"
  "errors"
  "fmt"
+ "testing"
+
  "github.com/stretchr/testify/require"
  "goa.design/goa-ai/runtime/agent/model"
  "goa.design/goa-ai/runtime/agent/rawjson"
- "testing"
  "github.com/stretchr/testify/assert"
  "generated.local/gen/reader/toolsets/records"
  "goa.design/goa-ai/runtime/agent/tools"
