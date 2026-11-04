@@ -375,43 +375,75 @@ func TestLookupAndOptionalFieldBinding(t *testing.T) {
  }
 }
 func TestLookupCorrectionUsesAdvertisedFieldDescription(t *testing.T) {
- table := make(map[string]*records.ScopeRef)
- for i:=0; i<1100; i++ { table[fmt.Sprintf("Scope %04d", i)] = &records.ScopeRef{Name:fmt.Sprintf("id-%d", i)} }
- bound,err := prepareReadLookup(records.SpecRead(), table)
- require.NoError(t, err)
- for _, spec := range []tools.ToolSpec{bound, bound.ForTextOnly()} {
-  assert.NotContains(t, string(spec.Payload.Schema), "Scope 1099", "lookup tables must not inflate advertised schemas")
-  definition,err := model.NewToolDefinitionFromSpec(spec)
-  require.NoError(t, err)
-  contract,err := model.NewRequestContract(&model.Request{Tools: []*model.ToolDefinition{definition}})
-  require.NoError(t, err)
-  response := &model.Response{StopReason:"tool_use", Content: []model.Message{{Role:model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID:"private-call",Name:string(spec.Name),Input:rawjson.Message("{\"scope\":\"*\",\"query\":\"private-query\"}")}}}}}
-  _,err = contract.ValidateResponse(response)
-  var rejected *model.OutputValidationError
-  require.ErrorAs(t,err,&rejected)
-  assert.Contains(t,rejected.RecoveryCorrection(),"Field \"scope\" must use an allowed value.")
-  assert.Contains(t,rejected.RecoveryCorrection(),"The scope containing the records.")
-  assert.NotContains(t,rejected.RecoveryCorrection(),"private-")
-  assert.NotContains(t,rejected.RecoveryCorrection(),"Scope 1099")
-  for _, key := range []string{"Scope 0000", "Scope 1099"} {
-   payload := rawjson.Message(fmt.Sprintf("{\"scope\":%q,\"query\":\"active\"}",key))
-   response.Content[0].Parts[0] = model.ToolUsePart{ID:"corrected",Name:string(spec.Name),Input:payload}
-   _,err = contract.ValidateResponse(response)
-   require.NoError(t,err)
-   decoded,err := spec.Payload.Codec.FromJSON(payload)
-   require.NoError(t,err)
-   complete,err := spec.PrepareInput(decoded)
-   require.NoError(t,err)
-   assert.Contains(t,string(complete),table[key].Name)
-  }
- }
- optional,err := prepareSearchOptionalLookup(records.SpecSearchOptional(),nil)
- require.NoError(t,err)
- assert.Contains(t,string(optional.Payload.Schema),"Optional scope filter.")
- _,err = optional.Payload.Codec.FromJSON([]byte("{\"query\":\"active\"}"))
- require.NoError(t,err)
- _,err = optional.Payload.Codec.FromJSON([]byte("{\"scope\":\"*\",\"query\":\"active\"}"))
- require.Error(t,err)
+	table := make(map[string]*records.ScopeRef)
+	for i := 0; i < 1100; i++ {
+		table[fmt.Sprintf("Scope %04d", i)] = &records.ScopeRef{
+			Name: fmt.Sprintf("id-%d", i),
+		}
+	}
+	bound, err := prepareReadLookup(records.SpecRead(), table)
+	require.NoError(t, err)
+	for _, spec := range []tools.ToolSpec{
+		bound,
+		bound.ForTextOnly(),
+	} {
+		assert.NotContains(t, string(spec.Payload.Schema), "Scope 1099", "lookup tables must not inflate advertised schemas")
+		definition, err := model.NewToolDefinitionFromSpec(spec)
+		require.NoError(t, err)
+		contract, err := model.NewRequestContract(&model.Request{
+			Tools: []*model.ToolDefinition{
+				definition,
+			},
+		})
+		require.NoError(t, err)
+		response := &model.Response{
+			StopReason: "tool_use",
+			Content: []model.Message{
+				{
+					Role: model.ConversationRoleAssistant,
+					Parts: []model.Part{
+						model.ToolUsePart{
+							ID:    "private-call",
+							Name:  string(spec.Name),
+							Input: rawjson.Message("{\"scope\":\"*\",\"query\":\"private-query\"}"),
+						},
+					},
+				},
+			},
+		}
+		_, err = contract.ValidateResponse(response)
+		var rejected *model.OutputValidationError
+		require.ErrorAs(t, err, &rejected)
+		assert.Contains(t, rejected.RecoveryCorrection(), "Field \"scope\" must use an allowed value.")
+		assert.Contains(t, rejected.RecoveryCorrection(), "The scope containing the records.")
+		assert.NotContains(t, rejected.RecoveryCorrection(), "private-")
+		assert.NotContains(t, rejected.RecoveryCorrection(), "Scope 1099")
+		for _, key := range []string{
+			"Scope 0000",
+			"Scope 1099",
+		} {
+			payload := rawjson.Message(fmt.Sprintf("{\"scope\":%q,\"query\":\"active\"}", key))
+			response.Content[0].Parts[0] = model.ToolUsePart{
+				ID:    "corrected",
+				Name:  string(spec.Name),
+				Input: payload,
+			}
+			_, err = contract.ValidateResponse(response)
+			require.NoError(t, err)
+			decoded, err := spec.Payload.Codec.FromJSON(payload)
+			require.NoError(t, err)
+			complete, err := spec.PrepareInput(decoded)
+			require.NoError(t, err)
+			assert.Contains(t, string(complete), table[key].Name)
+		}
+	}
+	optional, err := prepareSearchOptionalLookup(records.SpecSearchOptional(), nil)
+	require.NoError(t, err)
+	assert.Contains(t, string(optional.Payload.Schema), "Optional scope filter.")
+	_, err = optional.Payload.Codec.FromJSON([]byte("{\"query\":\"active\"}"))
+	require.NoError(t, err)
+	_, err = optional.Payload.Codec.FromJSON([]byte("{\"scope\":\"*\",\"query\":\"active\"}"))
+	require.Error(t, err)
 }
 
 `
