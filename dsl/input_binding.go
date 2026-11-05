@@ -100,7 +100,8 @@ func BindField(field string, fn ...func()) {
 // BindField declaration. At runtime, the application supplies a map from the
 // string key to the provider's typed field value; the generated decoder validates
 // the model-supplied key and resolves it against that table before preparing the
-// provider payload.
+// provider payload. If the lookup description is omitted, the generated key
+// inherits the provider field description; an explicit description replaces it.
 func Lookup(keyType any, args ...any) {
 	binding, ok := eval.Current().(*agentsexpr.FieldBindingExpr)
 	if !ok {

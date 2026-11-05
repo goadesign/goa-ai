@@ -205,3 +205,51 @@ func TestPrepare_PreservesExplicitOpenAPIGenerateMetadata(t *testing.T) {
 	require.Contains(t, got.Attribute().Meta, "type:generate:force")
 	require.Equal(t, []string{"true"}, got.Attribute().Meta["openapi:generate"])
 }
+
+func TestLookupDescriptionInheritanceDoesNotMutateSharedAttributes(t *testing.T) {
+	lookup := &goaexpr.AttributeExpr{
+		Type: goaexpr.String,
+	}
+	for _, description := range []string{
+		"One scope; wildcard unsupported.",
+		"One or all scopes.",
+	} {
+		original := &goaexpr.AttributeExpr{
+			Type: &goaexpr.Object{
+				&goaexpr.NamedAttributeExpr{
+					Name: "scope",
+
+					Attribute: &goaexpr.AttributeExpr{
+						Type: goaexpr.Int,
+
+						Description: description,
+					},
+				},
+			},
+		}
+		replaced := modelLookupTransportShape(original, map[string]*goaexpr.AttributeExpr{
+			"scope": lookup,
+		})
+		require.Equal(t, description, goaexpr.AsObject(replaced.Type).Attribute("scope").Description)
+		require.Equal(t, goaexpr.Int, goaexpr.AsObject(original.Type).Attribute("scope").Type)
+		require.Empty(t, lookup.Description)
+	}
+	lookup.Description = "Exact scope name."
+	original := &goaexpr.AttributeExpr{
+		Type: &goaexpr.Object{
+			&goaexpr.NamedAttributeExpr{
+				Name: "scope",
+
+				Attribute: &goaexpr.AttributeExpr{
+					Type: goaexpr.Int,
+
+					Description: "Provider description.",
+				},
+			},
+		},
+	}
+	replaced := modelLookupTransportShape(original, map[string]*goaexpr.AttributeExpr{
+		"scope": lookup,
+	})
+	require.Equal(t, "Exact scope name.", goaexpr.AsObject(replaced.Type).Attribute("scope").Description)
+}

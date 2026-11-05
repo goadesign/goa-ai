@@ -211,7 +211,11 @@ func modelLookupTransportShape(att *goaexpr.AttributeExpr, lookups map[string]*g
 		replaced := false
 		for _, named := range *obj {
 			if named.Name == fieldName {
+				description := named.Attribute.Description
 				named.Attribute = goaexpr.DupAtt(lookup)
+				if named.Attribute.Description == "" {
+					named.Attribute.Description = description
+				}
 				replaced = true
 				break
 			}
