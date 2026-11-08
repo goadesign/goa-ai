@@ -8662,11 +8662,19 @@ precedence:
      `planner.ToolFailureProvider` first.
   2. Field-level `ValidationIssues(err)` map to `FailureInvalidCall`
      (`RecoveryCorrectCall`).
-  3. Explicit wire codes `"rate_limited"` (`FailureRateLimited` +
-     `RecoveryReplan`) and `"timeout"` (`FailureTimeout` + `RecoveryFinish`)
-     map before declared-error lookup when not a runtime fault.
-  4. Eligible declared errors map via `EligibleDeclaredToolFailure` to
-     `FailureDomainRejection` or `FailureUnavailable` with `RecoveryReplan`.
+  3. Reserved wire error codes handled by `defaultToolFailure` take precedence
+     before declared-error lookup (with no runtime `Fault` guard):
+     `"stale_registration"` and `"service_unavailable"` map to
+     `FailureUnavailable` (`RecoveryReplan`); `"outcome_unknown"` maps to
+     `FailureInternal` (`RecoveryFinish`); `"rate_limited"` maps to
+     `FailureRateLimited` (`RecoveryReplan`); `"invalid_input"` maps to
+     `FailureDomainRejection` (`RecoveryReplan`); `"invalid_arguments"` maps to
+     `FailureInvalidCall` (`RecoveryCorrectCall`); and `"timeout"` maps to
+     `FailureTimeout` (`RecoveryFinish`).
+  4. When the wire code falls through to the default `FailureInternal`
+     (`RecoveryFinish`) branch (`isDefaultFallthrough`), eligible declared
+     errors map via `EligibleDeclaredToolFailure` to `FailureDomainRejection` or
+     `FailureUnavailable` with `RecoveryReplan`.
   5. All other errors map to `FailureInternal` (`RecoveryFinish`).
 
 Note that when a tool fails with `RecoveryReplan` (`FailureDomainRejection` or
