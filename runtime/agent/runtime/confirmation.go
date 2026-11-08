@@ -25,12 +25,23 @@ type (
 
 	// ToolConfirmation defines how to request confirmation and how to represent
 	// a user denial for a given tool.
+	//
+	// If Prompt or DeniedResult returns an error implementing
+	// planner.ToolFailureProvider, the runtime records that refusal as a
+	// structured planner.ToolFailure without pausing for operator confirmation
+	// or executing the tool: in multi-call agent turns, unconfirmed sibling
+	// calls still execute and results are ordered by original tool call; in
+	// direct single-tool executions, the operation fails with the refusal's
+	// ToolError. Any other callback error aborts the workflow as a runtime
+	// execution error.
 	ToolConfirmation struct {
-		// Prompt returns the deterministic prompt shown to the user for this call.
+		// Prompt returns the deterministic prompt shown to the user for this call,
+		// or a planner.ToolFailureProvider error to refuse the call before prompting.
 		Prompt func(ctx context.Context, call *ToolCall) (string, error)
 		// DeniedResult constructs a schema-compatible tool result value representing
-		// a user denial. The runtime attaches it to the original tool_call_id with
-		// Error unset.
+		// a user denial (or returns a planner.ToolFailureProvider error to refuse the
+		// call before prompting). The runtime attaches a denial value to the original
+		// tool_call_id with Error unset.
 		DeniedResult func(ctx context.Context, call *ToolCall) (any, error)
 	}
 )

@@ -165,7 +165,27 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		err = p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
 {{- end }}
 		if err != nil {
+{{- if .DeclaredErrors }}
+			return toolregistry.NewToolResultDeclaredServiceErrorMessage(
+				msg.RegistrationToken,
+				msg.ToolUseID,
+				msg.Tool,
+				toolErrorCode(err),
+				err,
+				func(name string) ({{ $.PlannerPackage }}.FailureKind, bool) {
+					switch name {
+					{{- range .DeclaredErrors }}
+					case {{ printf "%q" .Name }}:
+						return {{ $.PlannerPackage }}.{{ .FailureKindConst }}, true
+					{{- end }}
+					default:
+						return "", false
+					}
+				},
+			), nil
+{{- else }}
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
+{{- end }}
 		}
 {{- if .ReadInputOutcome }}
         completed, pending, err := {{ .ReadInputOutcome }}(methodOut)

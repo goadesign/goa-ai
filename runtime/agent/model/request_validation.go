@@ -416,15 +416,34 @@ func validateRestoredOutputValidationCause(cause error) error {
 // validateOwnedResponse applies the request rules after the model boundary has
 // copied the provider response and stamped caller-owned usage identity.
 func (c *RequestContract) validateOwnedResponse(response *Response) (OutputValidationKind, error) {
-	if kind, err := validateCanonicalResponseOutput(response); err != nil {
+	if c.stream.structuredOutputPresent && response != nil && response.OutputLimited && len(response.Content) == 0 {
+		if err := validateTokenUsage(response.Usage); err != nil {
+			return OutputValidationUsage, fmt.Errorf("invalid model response: %w", err)
+		}
+		if response.StopReason == "" {
+			return OutputValidationResponseShape, fmt.Errorf(
+				"invalid model response: %w",
+				errors.New("model: response is missing its stop reason"),
+			)
+		}
+	} else if kind, err := validateCanonicalResponseOutput(response); err != nil {
 		return kind, fmt.Errorf("invalid model response: %w", err)
 	}
 	if c.stream.structuredOutputPresent {
 		payload, err := structuredOutputResponsePayload(response)
 		if err != nil {
+			if response.OutputLimited {
+				return OutputValidationOutputLimited, err
+			}
 			return OutputValidationStructuredOutput, err
 		}
 		if err := c.structuredValidate(payload); err != nil {
+			if response.OutputLimited {
+				return OutputValidationOutputLimited, fmt.Errorf(
+					"structured output response does not match its schema: %w",
+					err,
+				)
+			}
 			return OutputValidationStructuredOutput, fmt.Errorf(
 				"structured output response does not match its schema: %w",
 				err,
@@ -433,6 +452,9 @@ func (c *RequestContract) validateOwnedResponse(response *Response) (OutputValid
 	}
 	if c.completionValidate != nil {
 		if err := c.completionValidate(response, nil); err != nil {
+			if response.OutputLimited {
+				return OutputValidationOutputLimited, err
+			}
 			return OutputValidationStructuredOutput, err
 		}
 	}

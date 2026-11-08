@@ -392,20 +392,93 @@ func NewToolResultServiceErrorMessage(
 	code string,
 	err error,
 ) ToolResultMessage {
+	return NewToolResultDeclaredServiceErrorMessage(registrationToken, toolUseID, tool, code, err, nil)
+}
+
+// NewToolResultDeclaredServiceErrorMessage constructs a terminal provider
+// result like NewToolResultServiceErrorMessage and maps eligible declared
+// service errors via declaredKind when no ToolFailureProvider, field-issue,
+// or non-default protocol code applies.
+func NewToolResultDeclaredServiceErrorMessage(
+	registrationToken, toolUseID string,
+	tool tools.Ident,
+	code string,
+	err error,
+	declaredKind func(string) (planner.FailureKind, bool),
+) ToolResultMessage {
 	out := NewToolResultErrorMessage(registrationToken, toolUseID, code, err.Error())
 	issues := ValidationIssues(err)
 	var provider planner.ToolFailureProvider
-	if errors.As(err, &provider) {
+	switch {
+	case errors.As(err, &provider):
 		out.Error.Failure = planner.CloneToolFailure(provider.ToolFailure(tool))
 		if out.Error.Failure.Recovery.Action == planner.RecoveryCorrectCall &&
 			len(out.Error.Failure.Recovery.Issues) == 0 {
 			out.Error.Failure.Recovery.Issues = tools.CloneFieldIssues(issues)
 		}
-	} else if len(issues) > 0 {
+	case len(issues) > 0:
 		out.Error.Failure = defaultToolFailure("invalid_arguments", err.Error())
 		out.Error.Failure.Recovery.Issues = tools.CloneFieldIssues(issues)
+	case isDefaultFallthrough(code, out.Error.Failure):
+		if eligible := EligibleDeclaredToolFailure(err, declaredKind); eligible != nil {
+			out.Error.Failure = eligible
+		}
 	}
 	return out
+}
+
+// EligibleDeclaredToolFailure inspects err against the precompiled declaredKind
+// lookup for a bound Goa method. If err represents an eligible non-fault,
+// non-timeout declared error without field validation issues, it returns a
+// ToolFailure with RecoveryReplan and the precompiled FailureKind. Otherwise
+// it returns nil.
+func EligibleDeclaredToolFailure(
+	err error,
+	declaredKind func(string) (planner.FailureKind, bool),
+) *planner.ToolFailure {
+	if err == nil || declaredKind == nil {
+		return nil
+	}
+	if len(ValidationIssues(err)) > 0 {
+		return nil
+	}
+
+	current := err
+	for current != nil {
+		if multi, ok := current.(interface{ Unwrap() []error }); ok && multi != nil {
+			return nil
+		}
+
+		if namer, ok := current.(goa.GoaErrorNamer); ok {
+			kind, found := declaredKind(namer.GoaErrorName())
+			if !found {
+				return nil
+			}
+
+			//nolint:errorlint // current is the exact error node in the manual unwrap walk.
+			if se, ok := current.(*goa.ServiceError); ok && se != nil {
+				if se.Fault || se.Timeout || len(se.History()) > 1 {
+					return nil
+				}
+			}
+
+			return &planner.ToolFailure{
+				Kind:  kind,
+				Error: planner.ToolErrorFromError(err),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryReplan,
+				},
+			}
+		}
+
+		u, ok := current.(interface{ Unwrap() error })
+		if !ok || u == nil {
+			break
+		}
+		current = u.Unwrap()
+	}
+
+	return nil
 }
 
 // NewToolResultInvalidArgumentsMessage constructs a correct-call failure with
@@ -602,4 +675,16 @@ func isGoaValidationConstraint(name string) bool {
 	default:
 		return false
 	}
+}
+
+// isDefaultFallthrough reports whether failure is the unspecialized internal finish
+// fallthrough produced by defaultToolFailure.
+func isDefaultFallthrough(code string, failure *planner.ToolFailure) bool {
+	if failure == nil {
+		return false
+	}
+	if code == ToolErrorCodeOutcomeUnknown {
+		return false
+	}
+	return failure.Kind == planner.FailureInternal && failure.Recovery.Action == planner.RecoveryFinish
 }

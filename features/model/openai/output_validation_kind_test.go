@@ -89,6 +89,101 @@ func TestStreamPumpClassifiesMalformedReasoningOutput(t *testing.T) {
 	requireOutputValidationKind(t, err, model.OutputValidationResponseShape)
 }
 
+func TestCompleteStructuredOutputOutputLimitedWhenTruncated(t *testing.T) {
+	resp := mustResponse(t, `{
+		"model":"gpt-4o",
+		"status":"incomplete",
+		"incomplete_details":{"reason":"max_output_tokens"},
+		"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3},
+		"output":[{
+			"id":"msg-1",
+			"type":"message",
+			"status":"incomplete",
+			"role":"assistant",
+			"content":[{"type":"output_text","text":"{\"summary\":\"trunc"}]
+		}]
+	}`)
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    &mockTransport{completeResponse: resp},
+	})
+	require.NoError(t, err)
+
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Summarize"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "summary_result",
+			Schema: []byte(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`),
+		},
+	}
+	_, err = client.Complete(context.Background(), req)
+	requireOutputValidationKind(t, err, model.OutputValidationOutputLimited)
+}
+
+func TestCompleteStructuredOutputOutputLimitedWhenEmptyOutput(t *testing.T) {
+	resp := mustResponse(t, `{
+		"model":"gpt-4o",
+		"status":"incomplete",
+		"incomplete_details":{"reason":"max_output_tokens"},
+		"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3},
+		"output":[]
+	}`)
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    &mockTransport{completeResponse: resp},
+	})
+	require.NoError(t, err)
+
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Summarize"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "summary_result",
+			Schema: []byte(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`),
+		},
+	}
+	_, err = client.Complete(context.Background(), req)
+	requireOutputValidationKind(t, err, model.OutputValidationOutputLimited)
+}
+
+func TestCompleteStructuredOutputStructuredOutputWhenNormalStop(t *testing.T) {
+	resp := mustResponse(t, `{
+		"model":"gpt-4o",
+		"status":"completed",
+		"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3},
+		"output":[{
+			"id":"msg-1",
+			"type":"message",
+			"status":"completed",
+			"role":"assistant",
+			"content":[{"type":"output_text","text":"{\"summary\":\"trunc"}]
+		}]
+	}`)
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    &mockTransport{completeResponse: resp},
+	})
+	require.NoError(t, err)
+
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Summarize"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "summary_result",
+			Schema: []byte(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`),
+		},
+	}
+	_, err = client.Complete(context.Background(), req)
+	requireOutputValidationKind(t, err, model.OutputValidationStructuredOutput)
+}
+
 func malformedReasoningResponse(t *testing.T) *responses.Response {
 	t.Helper()
 	return mustResponse(t, `{

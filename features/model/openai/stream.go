@@ -731,15 +731,18 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 	if p.output != nil && !p.continueSearch {
 		payload, err := structuredOutputPayload(translated.Content, p.output, p.projection)
 		if err != nil {
-			return err
-		}
-		if err := p.emit(model.CompletionChunk{
-			Completion: model.Completion{
-				Name:    structuredOutputName(p.output),
-				Payload: payload,
-			},
-		}); err != nil {
-			return err
+			if !translated.OutputLimited {
+				return err
+			}
+		} else {
+			if err := p.emit(model.CompletionChunk{
+				Completion: model.Completion{
+					Name:    structuredOutputName(p.output),
+					Payload: payload,
+				},
+			}); err != nil {
+				return err
+			}
 		}
 	} else {
 		for _, call := range translated.ToolCalls() {

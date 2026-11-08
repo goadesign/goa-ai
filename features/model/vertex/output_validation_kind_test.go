@@ -47,6 +47,16 @@ func TestVertexCompleteReturnsExactOutputValidationKinds(t *testing.T) {
 			request: vertexToolRequest,
 			kind:    model.OutputValidationToolArguments,
 		},
+		{
+			name: "output limited missing content",
+			response: &genai.GenerateContentResponse{
+				Candidates: []*genai.Candidate{{
+					FinishReason: genai.FinishReasonMaxTokens,
+				}},
+			},
+			request: vertexStructuredOutputRequest,
+			kind:    model.OutputValidationOutputLimited,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

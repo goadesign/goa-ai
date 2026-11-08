@@ -47,6 +47,7 @@ type (
 		allowed       []ToolCall
 		immediate     []ToolCall
 		confirmations []confirmationAwait
+		refusals      []confirmationRefusal
 		awaitItems    []planner.AwaitItem
 		budgetCost    int
 		admitted      bool

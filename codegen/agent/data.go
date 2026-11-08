@@ -748,6 +748,9 @@ type (
 		// when this tool is part of an exported toolset.
 		PassthroughMethod string
 
+		// DeclaredErrors lists the errors declared on the bound Goa method.
+		DeclaredErrors []*DeclaredErrorData
+
 		// method is the bound Goa method whose finalized plan supplies selectors
 		// and type references for generated service calls.
 		method *goaexpr.MethodExpr
@@ -794,6 +797,18 @@ type (
 		CursorField string
 		// NextCursorField is the model-facing JSON result field name.
 		NextCursorField string
+	}
+
+	// DeclaredErrorData captures the precomputed planner failure classification
+	// for an eligible non-fault, non-timeout error declared on a bound Goa
+	// service method.
+	DeclaredErrorData struct {
+		// Name is the Goa error name declared on the bound service method.
+		Name string
+		// FailureKindConst is the planner.FailureKind constant identifier
+		// ("FailureDomainRejection" or "FailureUnavailable") emitted in generated
+		// service executors and providers.
+		FailureKindConst string
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,

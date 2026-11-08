@@ -63,6 +63,9 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 			if len(planned.inputMethods) != 0 || len(planned.taskMethods) != 0 {
 				planned.specs.mcpPackage = planned.public.ImportName(mcpRuntimeImportPath)
 			}
+			if toolsetHasDeclaredErrors(owner) {
+				planned.specs.plannerPackage = planned.public.ImportName("goa.design/goa-ai/runtime/agent/planner")
+			}
 			planned.specs.serviceTypeRef = planned.public.ImportName(planned.serviceImportPath) + "." + owner.SourceService.ServiceDeclaration.Name()
 		}
 		if err := planned.linkInputExchanges(services); err != nil {

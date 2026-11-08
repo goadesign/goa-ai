@@ -278,6 +278,9 @@ func (p *toolsetHelperPackagePlan) planMethodImports(servicePlan *service.Plan, 
 		goacodegen.NewImport("runtime", "goa.design/goa-ai/runtime/agent/runtime"),
 		goacodegen.NewImport("tools", "goa.design/goa-ai/runtime/agent/tools"),
 	}
+	if hasDeclaredErrorTool(tools) {
+		serviceImports = append(serviceImports, goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"))
+	}
 	if hasBoundsTool(tools) {
 		serviceImports = append(serviceImports, goacodegen.NewImport("agent", "goa.design/goa-ai/runtime/agent"))
 	}

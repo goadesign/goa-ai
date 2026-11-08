@@ -116,9 +116,9 @@ func newStreamValidator(contract *RequestContract) *streamValidator {
 
 // SetCompletionValidator attaches caller-supplied low-level validation to one
 // structured-output request. The model client runs it before returning a unary
-// response, final completion chunk, or clean stream EOF. Streaming calls first
-// pass nil response with one completion for pre-exposure validation, then pass
-// both values at EOF for reconciliation. Unary calls pass only response.
+// response, final completion chunk, or clean stream EOF. Streaming calls pass
+// both the complete response and streamed completion at terminal validation;
+// unary calls pass only response.
 //
 // This hook does not imply generated-code provenance. The typed completion
 // package uses it with generated codecs; other low-level callers own any
@@ -329,18 +329,6 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 				errors.New("model stream emitted multiple final completions"),
 			)
 		}
-		if err := v.structuredValidate(actual.Completion.Payload); err != nil {
-			return classifyOutputValidation(
-				OutputValidationStructuredOutput,
-				fmt.Errorf("stream completion does not match its schema: %w", err),
-			)
-		}
-		if v.completionValidate != nil {
-			completion := actual.Completion
-			if err := v.completionValidate(nil, &completion); err != nil {
-				return classifyOutputValidation(OutputValidationStructuredOutput, err)
-			}
-		}
 		completion := snapshotCompletion(actual.Completion)
 		v.completion = &completion
 	case StopChunk:
@@ -352,15 +340,19 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 				)
 			}
 		}
-		if v.expectsCompletion && v.completion == nil {
-			return classifyOutputValidation(
-				OutputValidationStructuredOutput,
-				errors.New("structured output stream stopped before a completion"),
-			)
-		}
 		v.stopped = true
 		v.stopReason = actual.Reason
 		v.outputLimited = actual.OutputLimited
+		if v.expectsCompletion && v.completion == nil {
+			kind := OutputValidationStructuredOutput
+			if actual.OutputLimited {
+				kind = OutputValidationOutputLimited
+			}
+			return classifyOutputValidation(
+				kind,
+				errors.New("structured output stream stopped before a completion"),
+			)
+		}
 	}
 	return nil
 }
@@ -369,8 +361,12 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 // provider response.
 func (v *streamValidator) finish(response *Response) error {
 	if v.expectsCompletion && v.completion == nil {
+		kind := OutputValidationStructuredOutput
+		if v.outputLimited || (response != nil && response.OutputLimited) {
+			kind = OutputValidationOutputLimited
+		}
 		return classifyOutputValidation(
-			OutputValidationStructuredOutput,
+			kind,
 			errors.New("structured output stream ended without a completion"),
 		)
 	}
@@ -462,18 +458,40 @@ func (v *streamValidator) finish(response *Response) error {
 	if v.completion != nil {
 		completionPayload := rawjson.Message(v.completion.payload)
 		if !json.Valid(completionPayload) {
+			kind := OutputValidationStructuredOutput
+			if v.outputLimited || (response != nil && response.OutputLimited) {
+				kind = OutputValidationOutputLimited
+			}
 			return classifyOutputValidation(
-				OutputValidationStructuredOutput,
+				kind,
 				errors.New("model stream emitted invalid completion JSON"),
+			)
+		}
+		if err := v.structuredValidate(completionPayload); err != nil {
+			kind := OutputValidationStructuredOutput
+			if v.outputLimited || (response != nil && response.OutputLimited) {
+				kind = OutputValidationOutputLimited
+			}
+			return classifyOutputValidation(
+				kind,
+				fmt.Errorf("stream completion does not match its schema: %w", err),
 			)
 		}
 		responsePayload, err := structuredOutputResponsePayload(response)
 		if err != nil {
-			return classifyOutputValidation(OutputValidationStructuredOutput, err)
+			kind := OutputValidationStructuredOutput
+			if v.outputLimited || (response != nil && response.OutputLimited) {
+				kind = OutputValidationOutputLimited
+			}
+			return classifyOutputValidation(kind, err)
 		}
 		if err := v.structuredValidate(responsePayload); err != nil {
+			kind := OutputValidationStructuredOutput
+			if v.outputLimited || (response != nil && response.OutputLimited) {
+				kind = OutputValidationOutputLimited
+			}
 			return classifyOutputValidation(
-				OutputValidationStructuredOutput,
+				kind,
 				fmt.Errorf("structured output response does not match its schema: %w", err),
 			)
 		}
@@ -489,7 +507,11 @@ func (v *streamValidator) finish(response *Response) error {
 				Payload: completionPayload,
 			}
 			if err := v.completionValidate(response, completion); err != nil {
-				return classifyOutputValidation(OutputValidationStructuredOutput, err)
+				kind := OutputValidationStructuredOutput
+				if v.outputLimited || (response != nil && response.OutputLimited) {
+					kind = OutputValidationOutputLimited
+				}
+				return classifyOutputValidation(kind, err)
 			}
 		}
 	}

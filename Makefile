@@ -37,7 +37,10 @@ test: test-unit test-mcp
 
 # MCP generator peers have their own processes and CI shards. All other root
 # packages and the maintained quickstart remain in this acceptance target.
+# Prebuild the race-instrumented agent runtime imported by generated fixtures
+# before per-fixture compilation deadlines begin, matching scripts/test-mcp.
 test-unit: tools
+	$(GO) build -race ./runtime/agent/runtime
 	$(GO) test -count=1 -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests' | grep -v '^goa.design/goa-ai/codegen/mcp$$'`
 	cd quickstart && $(GO) test -count=1 ./...
 

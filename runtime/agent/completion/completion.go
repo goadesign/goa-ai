@@ -83,8 +83,6 @@ type (
 	}
 )
 
-var errOutputLimited = errors.New("typed completion output reached its generation limit")
-
 // Complete runs a unary typed completion using the provided generated spec.
 func Complete[T any](ctx context.Context, client model.Client, req *model.Request, spec Spec[T]) (*Response[T], error) {
 	if err := model.ValidateClient(client); err != nil {
@@ -282,14 +280,7 @@ func configureCompletionValidation[T any](
 	validation := &completionValidation[T]{}
 	err := model.SetCompletionValidator(request, func(response *model.Response, streamed *model.Completion) error {
 		if response == nil {
-			if streamed == nil {
-				return fmt.Errorf("completion %q validation requires response or stream output", spec.Name)
-			}
-			_, err := decodePayload(streamed.Payload, spec)
-			return err
-		}
-		if response.OutputLimited {
-			return errOutputLimited
+			return fmt.Errorf("completion %q validation requires response", spec.Name)
 		}
 		responsePayload, err := completionPayload(response, spec)
 		if err != nil {

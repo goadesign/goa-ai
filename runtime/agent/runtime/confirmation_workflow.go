@@ -26,35 +26,65 @@ import (
 	"fmt"
 	"text/template"
 
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type confirmationAwait struct {
-	awaitID string
-	call    ToolCall
-	plan    *confirmationPlan
-}
+type (
+	// confirmationAwait holds the rendered confirmation plan and await ID for a
+	// tool call that must pause for operator approval before executing.
+	confirmationAwait struct {
+		awaitID string
+		call    ToolCall
+		plan    *confirmationPlan
+	}
+
+	// confirmationRefusal pairs a tool call with the structured planner failure
+	// returned when a pre-confirmation hook refuses execution before prompting.
+	confirmationRefusal struct {
+		call    ToolCall
+		failure *planner.ToolFailure
+	}
+
+	// confirmationPlan is the runtime-owned confirmation render plan for a single
+	// tool call.
+	confirmationPlan struct {
+		Title        string
+		Prompt       string
+		DeniedResult any
+		Refusal      *planner.ToolFailure
+	}
+)
 
 // splitConfirmationCalls partitions allowed tool calls into:
-// - calls that may execute immediately, and
-// - calls that require an await_confirmation boundary before execution.
+// - calls that may execute immediately,
+// - calls that require an await_confirmation boundary before execution, and
+// - calls refused by pre-confirmation policy.
 func (r *Runtime) splitConfirmationCalls(
 	ctx context.Context,
 	base *workflowConversation,
 	allowed []ToolCall,
 	specs []tools.ToolSpec,
-) ([]ToolCall, []confirmationAwait, error) {
+) ([]ToolCall, []confirmationAwait, []confirmationRefusal, error) {
 	if len(allowed) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	toExecute := make([]ToolCall, 0, len(allowed))
 	toConfirm := make([]confirmationAwait, 0, 1)
+	refusals := make([]confirmationRefusal, 0, 1)
 	for index, call := range allowed {
 		plan, needs, err := r.confirmationPlanForSpec(ctx, &call, specs[index], true)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
+		}
+		if plan != nil && plan.Refusal != nil {
+			refusals = append(refusals, confirmationRefusal{
+				call:    call,
+				failure: plan.Refusal,
+			})
+			continue
 		}
 		if !needs {
 			toExecute = append(toExecute, call)
@@ -67,15 +97,7 @@ func (r *Runtime) splitConfirmationCalls(
 			plan:    plan,
 		})
 	}
-	return toExecute, toConfirm, nil
-}
-
-// confirmationPlan is the runtime-owned confirmation render plan for a single
-// tool call.
-type confirmationPlan struct {
-	Title        string
-	Prompt       string
-	DeniedResult any
+	return toExecute, toConfirm, refusals, nil
 }
 
 // confirmationPlan returns the rendered confirmation prompt/denied-result for
@@ -117,10 +139,22 @@ func (r *Runtime) confirmationPlanForSpec(
 			}
 			prompt, err := h.Prompt(ctx, call)
 			if err != nil {
+				var provider planner.ToolFailureProvider
+				if errors.As(err, &provider) {
+					return &confirmationPlan{
+						Refusal: planner.CloneToolFailure(provider.ToolFailure(call.Name)),
+					}, false, nil
+				}
 				return nil, false, err
 			}
 			deniedResult, err := h.DeniedResult(ctx, call)
 			if err != nil {
+				var provider planner.ToolFailureProvider
+				if errors.As(err, &provider) {
+					return &confirmationPlan{
+						Refusal: planner.CloneToolFailure(provider.ToolFailure(call.Name)),
+					}, false, nil
+				}
 				return nil, false, err
 			}
 			return &confirmationPlan{

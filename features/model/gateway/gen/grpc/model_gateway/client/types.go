@@ -1141,8 +1141,8 @@ func validatemodel_5F_gateway_model_5F_gateway_ValidationErrorDetail_At_validati
 		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "validation"))
 	}
 	if validation.Kind != nil {
-		if !(*validation.Kind == "response_shape" || *validation.Kind == "output_bounds" || *validation.Kind == "tool_identity" || *validation.Kind == "tool_arguments" || *validation.Kind == "tool_choice" || *validation.Kind == "structured_output" || *validation.Kind == "stream_protocol" || *validation.Kind == "usage") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("validation.kind", *validation.Kind, []any{"response_shape", "output_bounds", "tool_identity", "tool_arguments", "tool_choice", "structured_output", "stream_protocol", "usage"}))
+		if !(*validation.Kind == "response_shape" || *validation.Kind == "output_bounds" || *validation.Kind == "tool_identity" || *validation.Kind == "tool_arguments" || *validation.Kind == "tool_choice" || *validation.Kind == "structured_output" || *validation.Kind == "output_limited" || *validation.Kind == "stream_protocol" || *validation.Kind == "usage") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("validation.kind", *validation.Kind, []any{"response_shape", "output_bounds", "tool_identity", "tool_arguments", "tool_choice", "structured_output", "output_limited", "stream_protocol", "usage"}))
 		}
 	}
 	if validation.Evidence != nil {

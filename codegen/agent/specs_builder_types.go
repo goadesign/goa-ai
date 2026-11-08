@@ -60,6 +60,8 @@ type (
 		providerImports []*codegen.ImportSpec
 		// mcpPackage is the resolved import used by input-only native providers.
 		mcpPackage string
+		// plannerPackage is the resolved import used by providers with declared method errors.
+		plannerPackage string
 		// serviceTypeRef is the final Goa service interface reference used by provider.go.
 		serviceTypeRef string
 	}

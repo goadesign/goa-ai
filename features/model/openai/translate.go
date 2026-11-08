@@ -164,9 +164,12 @@ func translateResponse(
 	if output != nil && (search == nil || search.searches == 0) {
 		payload, err := structuredOutputPayload(translated.Content, output, outputProjection)
 		if err != nil {
-			return nil, err
+			if !translated.OutputLimited {
+				return nil, err
+			}
+		} else {
+			translated.Content = replaceStructuredOutputText(translated.Content, string(payload))
 		}
-		translated.Content = replaceStructuredOutputText(translated.Content, string(payload))
 	}
 	return translated, nil
 }
