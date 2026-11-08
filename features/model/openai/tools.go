@@ -30,6 +30,12 @@ type toolCodec struct {
 	exact bool
 }
 
+// strictOmissionDescription explains how the provider represents absence only
+// when the adapter has added nullable alternatives to optional fields.
+const strictOmissionDescription = "In the strict schema, an optional field that should be omitted is represented by null. Use null when the instructions say to omit a field."
+
+// encodeTools prepares provider tool definitions and the inverse name and
+// optional-field conversion used when arguments return from the provider.
 func encodeTools(defs []*model.ToolDefinition, modelID string, exact bool) ([]responses.ToolUnionParam, *toolCodec, error) {
 	if len(defs) == 0 {
 		return nil, nil, nil
@@ -60,7 +66,7 @@ func encodeTools(defs []*model.ToolDefinition, modelID string, exact bool) ([]re
 			// The strict compiler only admits optional fields whose null
 			// representation can be decoded back to absence.
 			if projection.canonicalizes {
-				description += "\n\nIn the strict tool schema, an optional field that should be omitted is represented by null. Use null when the tool instructions say to omit a field."
+				description += "\n\n" + strictOmissionDescription
 			}
 			codec.projections[providerName] = projection
 			schema, err = json.Marshal(projection.schema)
@@ -133,6 +139,8 @@ func encodeToolChoice(
 	}
 }
 
+// encodeStructuredOutput prepares the provider's strict response format and the
+// inverse optional-field conversion without changing the caller's schema.
 func encodeStructuredOutput(
 	output *model.StructuredOutput,
 	modelID string,
@@ -163,13 +171,24 @@ func encodeStructuredOutput(
 	if err != nil {
 		return responses.ResponseTextConfigParam{}, nil, false, err
 	}
+	description := output.Description
+	if projection.canonicalizes {
+		if description != "" {
+			description += "\n\n"
+		}
+		description += strictOmissionDescription
+	}
+	format := &responses.ResponseFormatTextJSONSchemaConfigParam{
+		Name:   name,
+		Schema: parameters,
+		Strict: param.NewOpt(true),
+	}
+	if description != "" {
+		format.Description = param.NewOpt(description)
+	}
 	return responses.ResponseTextConfigParam{
 		Format: responses.ResponseFormatTextConfigUnionParam{
-			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
-				Name:   name,
-				Schema: parameters,
-				Strict: param.NewOpt(true),
-			},
+			OfJSONSchema: format,
 		},
 	}, projection, true, nil
 }
