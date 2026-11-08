@@ -246,6 +246,130 @@ func TestValidatedStreamChecksFinalCompletionAfterPreview(t *testing.T) {
 	require.Nil(t, stream.Response())
 }
 
+func TestValidatedStreamClassifiesSchemaAndCodecRejectionByStopCondition(t *testing.T) {
+	tests := []struct {
+		name          string
+		payload       string
+		codecErr      error
+		stopReason    string
+		outputLimited bool
+		wantKind      OutputValidationKind
+	}{
+		{
+			name:          "schema invalid JSON at token limit",
+			payload:       `{"value":"wrong"}`,
+			stopReason:    "max_tokens",
+			outputLimited: true,
+			wantKind:      OutputValidationOutputLimited,
+		},
+		{
+			name:          "schema invalid JSON at ordinary stop",
+			payload:       `{"value":"wrong"}`,
+			stopReason:    "stop",
+			outputLimited: false,
+			wantKind:      OutputValidationStructuredOutput,
+		},
+		{
+			name:          "caller codec rejection at token limit",
+			payload:       `{"value":7}`,
+			codecErr:      errors.New("generated codec rejected value 7"),
+			stopReason:    "max_tokens",
+			outputLimited: true,
+			wantKind:      OutputValidationOutputLimited,
+		},
+		{
+			name:          "caller codec rejection at ordinary stop",
+			payload:       `{"value":7}`,
+			codecErr:      errors.New("generated codec rejected value 7"),
+			stopReason:    "stop",
+			outputLimited: false,
+			wantKind:      OutputValidationStructuredOutput,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			request := structuredOutputRequest(`{
+				"type":"object",
+				"properties":{"value":{"type":"integer"}},
+				"required":["value"]
+			}`)
+			if tc.codecErr != nil {
+				require.NoError(t, SetCompletionValidator(request, func(*Response, *Completion) error {
+					return tc.codecErr
+				}))
+			}
+			response := structuredOutputResponse(tc.payload)
+			response.StopReason = tc.stopReason
+			response.OutputLimited = tc.outputLimited
+
+			stream := mustValidateStream(t, &validatedStreamFixture{
+				chunks: []Chunk{
+					CompletionChunk{Completion: Completion{
+						Name:    "answer",
+						Payload: []byte(tc.payload),
+					}},
+					StopChunk{
+						Reason:        tc.stopReason,
+						OutputLimited: tc.outputLimited,
+					},
+				},
+				response: response,
+			}, request)
+
+			final, err := stream.Recv()
+			require.Nil(t, final)
+			var validationErr *OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, tc.wantKind, validationErr.Kind())
+			require.Nil(t, stream.Response())
+		})
+	}
+}
+
+func TestRequestContractClassifiesMissingUnaryStructuredCompletionAsOutputLimited(t *testing.T) {
+	contract, err := NewRequestContract(structuredOutputRequest(`{
+		"type":"object",
+		"properties":{"value":{"type":"string"}},
+		"required":["value"]
+	}`))
+	require.NoError(t, err)
+
+	t.Run("missing content at output limit classifies as output_limited", func(t *testing.T) {
+		validated, err := contract.ValidateResponse(&Response{
+			StopReason:    "max_tokens",
+			OutputLimited: true,
+			Usage:         TokenUsage{InputTokens: 4, OutputTokens: 8, TotalTokens: 12},
+		})
+		require.Nil(t, validated)
+		var validationErr *OutputValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, OutputValidationOutputLimited, validationErr.Kind())
+	})
+
+	t.Run("missing content at normal stop remains response_shape", func(t *testing.T) {
+		validated, err := contract.ValidateResponse(&Response{
+			StopReason: "stop",
+		})
+		require.Nil(t, validated)
+		var validationErr *OutputValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, OutputValidationResponseShape, validationErr.Kind())
+	})
+
+	t.Run("missing content at output limit with invalid usage still reports usage error", func(t *testing.T) {
+		validated, err := contract.ValidateResponse(&Response{
+			StopReason:    "max_tokens",
+			OutputLimited: true,
+			Usage:         TokenUsage{InputTokens: -1},
+		})
+		require.Nil(t, validated)
+		var validationErr *OutputValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, OutputValidationUsage, validationErr.Kind())
+	})
+}
+
 func TestValidatedStreamStillReconcilesCompletionWithTerminalResponse(t *testing.T) {
 	request := structuredOutputRequest(`{
 		"type":"object",
@@ -323,7 +447,7 @@ func TestValidatedStreamAlwaysReconcilesWithCustomValidator(t *testing.T) {
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.ErrorContains(t, errors.Unwrap(validationErr), "stream completion does not match canonical response")
-	require.Equal(t, 1, customCalls)
+	require.Zero(t, customCalls)
 }
 
 func TestValidatedStreamPreservesBufferedOrderUsageAndIdentity(t *testing.T) {

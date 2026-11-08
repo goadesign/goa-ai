@@ -166,20 +166,22 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- end }}
 		if err != nil {
 {{- if .DeclaredErrors }}
-			return toolregistry.NewToolResultServiceErrorMessage(
+			return toolregistry.NewToolResultDeclaredServiceErrorMessage(
 				msg.RegistrationToken,
 				msg.ToolUseID,
 				msg.Tool,
 				toolErrorCode(err),
 				err,
-				{{- range .DeclaredErrors }}
-				toolregistry.DeclaredErrorSpec{
-					Name: {{ printf "%q" .Name }},
-					Temporary: {{ .Temporary }},
-					Fault: {{ .Fault }},
-					Timeout: {{ .Timeout }},
+				func(name string) ({{ $.PlannerPackage }}.FailureKind, bool) {
+					switch name {
+					{{- range .DeclaredErrors }}
+					case {{ printf "%q" .Name }}:
+						return {{ $.PlannerPackage }}.{{ .FailureKindConst }}, true
+					{{- end }}
+					default:
+						return "", false
+					}
 				},
-				{{- end }}
 			), nil
 {{- else }}
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil

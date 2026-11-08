@@ -206,3 +206,14 @@ func toolsetHasMethodTools(toolset *ToolsetData) bool {
 	}
 	return false
 }
+
+// toolsetHasDeclaredErrors reports whether any tool in toolset has eligible
+// declared service errors.
+func toolsetHasDeclaredErrors(toolset *ToolsetData) bool {
+	for _, tool := range toolset.Tools {
+		if len(tool.DeclaredErrors) > 0 {
+			return true
+		}
+	}
+	return false
+}

@@ -270,7 +270,10 @@ Tool("cancel_order", "Cancel an existing customer order", func() {
 })
 ```
 
-When the model invokes a tool with a `Confirmation` policy (or a runtime-registered confirmation rule), the workflow does not execute the tool activity. Instead, it renders `PromptTemplate` against the validated payload, publishes an `await_confirmation` event, persists a `goa-ai.run-suspension.v14` checkpoint, and exits the workflow cleanly. When the user approves or denies via `ProvideConfirmation`, a new workflow continuation either executes the tool with the exact checkpointed payload or injects the rendered `DeniedResultTemplate` into the transcript.
+When the model invokes a tool with a `Confirmation` policy (or a runtime-registered confirmation rule via `WithToolConfirmation`), the workflow does not execute the tool activity. Instead, it evaluates the confirmation rule against the validated payload:
+
+- If a runtime `ToolConfirmation.Prompt` or `ToolConfirmation.DeniedResult` callback returns an error implementing `planner.ToolFailureProvider`, the runtime refuses the call before prompting. In an agent turn, unconfirmed sibling tool calls still execute, the refused call is recorded as a failed `ToolResult` in original tool-call order without emitting `await_confirmation`, and the workflow resumes the planner directly if no other calls require confirmation. In a direct single-tool operation, the refusal emits scheduled/failed tool events and terminates the operation with the refusal's `ToolError`. Ordinary callback errors that do not implement `planner.ToolFailureProvider` remain fatal workflow errors.
+- Otherwise, the workflow renders `PromptTemplate` (or `Prompt`), publishes an `await_confirmation` event, persists a `goa-ai.run-suspension.v14` checkpoint, and exits the workflow cleanly. When the user approves or denies via `ProvideConfirmation`, a new workflow continuation either executes the tool with the exact checkpointed payload or injects the rendered `DeniedResultTemplate` into the transcript.
 
 #### Tool Call and Result Hints (`runtime/agent/runtime/hints`)
 
@@ -673,6 +676,17 @@ When a Goa-AI agent invokes an MCP server via `mcpruntime.Caller`, errors are cl
 - **`*mcp.MalformedResponseError`**: The server returned invalid JSON or a response violating the MCP schema (`malformed_result`).
 - **`*mcp.InternalError`**: The server returned a JSON-RPC error object (such as `-32602` or `-32603`).
 - **`*mcp.OutcomeUnknownError`**: The connection dropped or timed out after the request was sent, so the caller cannot know whether a non-idempotent tool side effect occurred.
+
+### Declared Goa Service Error Mapping (`codegen/agent` & `runtime/toolregistry`)
+
+When a non-task Goa service method bound to a tool declares non-fault, non-timeout errors (`Error("name", ...)` without `Fault()` or `Timeout()`), `goa gen` emits a specialized error-name switch in the generated service executor (`service_executor.go`) and tool provider (`provider.go`). Task-backed methods (`TaskExchange`) are excluded. Regenerate with `goa gen` whenever method error declarations change:
+
+- **Precedence**:
+  1. Errors implementing `planner.ToolFailureProvider` always take precedence on both in-process and registry paths.
+  2. On the remote registry provider path (`toolregistry.NewToolResultDeclaredServiceErrorMessage`), field-level `ValidationIssues(err)` map to `FailureInvalidCall` (`RecoveryCorrectCall`), and explicit wire codes `"rate_limited"` (`FailureRateLimited` + `RecoveryReplan`) and `"timeout"` (`FailureTimeout` + `RecoveryFinish`) map before declared-error lookup. On the in-process service executor path (`service_executor.go`), tool argument validation runs before the service call, so service-returned errors with `ValidationIssues`, runtime `Fault`, `Timeout`, or `len(History()) > 1` are rejected by `toolregistry.EligibleDeclaredToolFailure` and fall through to `FailureInternal` (`RecoveryFinish`).
+  3. Single-cause errors (`Unwrap() []error` excluded) implementing `goa.GoaErrorNamer` whose name matches an eligible declared error map to `RecoveryReplan` with `FailureUnavailable` (if declared `Temporary()`) or `FailureDomainRejection` (otherwise).
+  4. All other errors map to `FailureInternal` (`RecoveryFinish`).
+- **Planner Catalog Effect**: When a tool fails with `RecoveryReplan`, the runtime removes that tool from the next planner turn's advertised catalog so the model replans without immediately re-invoking the rejected tool.
 
 ---
 

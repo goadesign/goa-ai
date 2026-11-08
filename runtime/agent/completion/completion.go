@@ -280,11 +280,7 @@ func configureCompletionValidation[T any](
 	validation := &completionValidation[T]{}
 	err := model.SetCompletionValidator(request, func(response *model.Response, streamed *model.Completion) error {
 		if response == nil {
-			if streamed == nil {
-				return fmt.Errorf("completion %q validation requires response or stream output", spec.Name)
-			}
-			_, err := decodePayload(streamed.Payload, spec)
-			return err
+			return fmt.Errorf("completion %q validation requires response", spec.Name)
 		}
 		responsePayload, err := completionPayload(response, spec)
 		if err != nil {

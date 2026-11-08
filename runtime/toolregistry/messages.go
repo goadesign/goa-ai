@@ -157,18 +157,6 @@ type (
 		Failure *planner.ToolFailure `json:"failure"`
 	}
 
-	// DeclaredErrorSpec describes one error declared in the Goa design for a method.
-	DeclaredErrorSpec struct {
-		// Name is the Goa error name (e.g. "invalid_state").
-		Name string
-		// Temporary indicates the error was marked with Temporary() in the design.
-		Temporary bool
-		// Fault indicates the error was marked with Fault() in the design.
-		Fault bool
-		// Timeout indicates the error was marked with Timeout() in the design.
-		Timeout bool
-	}
-
 	// ToolRetry is a non-terminal registry orchestration instruction. It never
 	// carries planner failure semantics.
 	ToolRetry struct {
@@ -403,7 +391,20 @@ func NewToolResultServiceErrorMessage(
 	tool tools.Ident,
 	code string,
 	err error,
-	declared ...DeclaredErrorSpec,
+) ToolResultMessage {
+	return NewToolResultDeclaredServiceErrorMessage(registrationToken, toolUseID, tool, code, err, nil)
+}
+
+// NewToolResultDeclaredServiceErrorMessage constructs a terminal provider
+// result like NewToolResultServiceErrorMessage and maps eligible declared
+// service errors via declaredKind when no ToolFailureProvider, field-issue,
+// or non-default protocol code applies.
+func NewToolResultDeclaredServiceErrorMessage(
+	registrationToken, toolUseID string,
+	tool tools.Ident,
+	code string,
+	err error,
+	declaredKind func(string) (planner.FailureKind, bool),
 ) ToolResultMessage {
 	out := NewToolResultErrorMessage(registrationToken, toolUseID, code, err.Error())
 	issues := ValidationIssues(err)
@@ -419,19 +420,23 @@ func NewToolResultServiceErrorMessage(
 		out.Error.Failure = defaultToolFailure("invalid_arguments", err.Error())
 		out.Error.Failure.Recovery.Issues = tools.CloneFieldIssues(issues)
 	case isDefaultFallthrough(code, out.Error.Failure):
-		if eligible := EligibleDeclaredToolFailure(err, declared); eligible != nil {
+		if eligible := EligibleDeclaredToolFailure(err, declaredKind); eligible != nil {
 			out.Error.Failure = eligible
 		}
 	}
 	return out
 }
 
-// EligibleDeclaredToolFailure inspects err against declared method error specs.
-// If err represents an eligible declared error, it returns a ToolFailure with
-// RecoveryReplan and either FailureDomainRejection or FailureUnavailable.
-// Otherwise it returns nil.
-func EligibleDeclaredToolFailure(err error, declared []DeclaredErrorSpec) *planner.ToolFailure {
-	if err == nil || len(declared) == 0 {
+// EligibleDeclaredToolFailure inspects err against the precompiled declaredKind
+// lookup for a bound Goa method. If err represents an eligible non-fault,
+// non-timeout declared error without field validation issues, it returns a
+// ToolFailure with RecoveryReplan and the precompiled FailureKind. Otherwise
+// it returns nil.
+func EligibleDeclaredToolFailure(
+	err error,
+	declaredKind func(string) (planner.FailureKind, bool),
+) *planner.ToolFailure {
+	if err == nil || declaredKind == nil {
 		return nil
 	}
 	if len(ValidationIssues(err)) > 0 {
@@ -445,12 +450,8 @@ func EligibleDeclaredToolFailure(err error, declared []DeclaredErrorSpec) *plann
 		}
 
 		if namer, ok := current.(goa.GoaErrorNamer); ok {
-			name := namer.GoaErrorName()
-			spec, found := findDeclaredErrorSpec(declared, name)
+			kind, found := declaredKind(namer.GoaErrorName())
 			if !found {
-				return nil
-			}
-			if spec.Fault || spec.Timeout {
 				return nil
 			}
 
@@ -461,10 +462,6 @@ func EligibleDeclaredToolFailure(err error, declared []DeclaredErrorSpec) *plann
 				}
 			}
 
-			kind := planner.FailureDomainRejection
-			if spec.Temporary {
-				kind = planner.FailureUnavailable
-			}
 			return &planner.ToolFailure{
 				Kind:  kind,
 				Error: planner.ToolErrorFromError(err),
@@ -678,16 +675,6 @@ func isGoaValidationConstraint(name string) bool {
 	default:
 		return false
 	}
-}
-
-// findDeclaredErrorSpec returns the declared error specification matching name.
-func findDeclaredErrorSpec(specs []DeclaredErrorSpec, name string) (DeclaredErrorSpec, bool) {
-	for _, spec := range specs {
-		if spec.Name == name {
-			return spec, true
-		}
-	}
-	return DeclaredErrorSpec{}, false
 }
 
 // isDefaultFallthrough reports whether failure is the unspecialized internal finish

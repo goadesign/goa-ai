@@ -116,9 +116,9 @@ func newStreamValidator(contract *RequestContract) *streamValidator {
 
 // SetCompletionValidator attaches caller-supplied low-level validation to one
 // structured-output request. The model client runs it before returning a unary
-// response, final completion chunk, or clean stream EOF. Streaming calls first
-// pass nil response with one completion for pre-exposure validation, then pass
-// both values at EOF for reconciliation. Unary calls pass only response.
+// response, final completion chunk, or clean stream EOF. Streaming calls pass
+// both the complete response and streamed completion at terminal validation;
+// unary calls pass only response.
 //
 // This hook does not imply generated-code provenance. The typed completion
 // package uses it with generated codecs; other low-level callers own any
@@ -329,18 +329,6 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 				errors.New("model stream emitted multiple final completions"),
 			)
 		}
-		if err := v.structuredValidate(actual.Completion.Payload); err != nil {
-			return classifyOutputValidation(
-				OutputValidationStructuredOutput,
-				fmt.Errorf("stream completion does not match its schema: %w", err),
-			)
-		}
-		if v.completionValidate != nil {
-			completion := actual.Completion
-			if err := v.completionValidate(nil, &completion); err != nil {
-				return classifyOutputValidation(OutputValidationStructuredOutput, err)
-			}
-		}
 		completion := snapshotCompletion(actual.Completion)
 		v.completion = &completion
 	case StopChunk:
@@ -477,6 +465,16 @@ func (v *streamValidator) finish(response *Response) error {
 			return classifyOutputValidation(
 				kind,
 				errors.New("model stream emitted invalid completion JSON"),
+			)
+		}
+		if err := v.structuredValidate(completionPayload); err != nil {
+			kind := OutputValidationStructuredOutput
+			if v.outputLimited || (response != nil && response.OutputLimited) {
+				kind = OutputValidationOutputLimited
+			}
+			return classifyOutputValidation(
+				kind,
+				fmt.Errorf("stream completion does not match its schema: %w", err),
 			)
 		}
 		responsePayload, err := structuredOutputResponsePayload(response)

@@ -52,13 +52,18 @@ func TestDeclaredErrorMapping11Rows(t *testing.T) {
 		},
 	}
 
-	declaredSpecs := []toolregistry.DeclaredErrorSpec{
-		{Name: "invalid_state"},
-		{Name: "temp_error", Temporary: true},
-		{Name: "invalid_input"},
-		{Name: "rate_limited"},
-		{Name: "timeout_by_design", Timeout: true},
-		{Name: "fault_by_design", Fault: true},
+	// Codegen filters out design-time Fault() and Timeout() errors ("fault_by_design",
+	// "timeout_by_design") and emits only eligible non-fault, non-timeout errors with
+	// their specialized failure kind.
+	declaredKind := func(name string) (planner.FailureKind, bool) {
+		switch name {
+		case "invalid_state", "invalid_input", "rate_limited":
+			return planner.FailureDomainRejection, true
+		case "temp_error":
+			return planner.FailureUnavailable, true
+		default:
+			return "", false
+		}
 	}
 
 	tests := []struct {
@@ -253,7 +258,7 @@ func TestDeclaredErrorMapping11Rows(t *testing.T) {
 			var provider planner.ToolFailureProvider
 			if errors.As(tc.err, &provider) {
 				inFailure = planner.CloneToolFailure(provider.ToolFailure("test_tool"))
-			} else if eligible := toolregistry.EligibleDeclaredToolFailure(tc.err, declaredSpecs); eligible != nil {
+			} else if eligible := toolregistry.EligibleDeclaredToolFailure(tc.err, declaredKind); eligible != nil {
 				inFailure = eligible
 			} else {
 				inFailure = &planner.ToolFailure{
@@ -269,8 +274,8 @@ func TestDeclaredErrorMapping11Rows(t *testing.T) {
 			assert.Equal(t, tc.wantInAct, inFailure.Recovery.Action, "in-process action mismatch")
 
 			// Remote path:
-			msg := toolregistry.NewToolResultServiceErrorMessage(
-				"token-1", "call-1", "test_tool", tc.code, tc.err, declaredSpecs...,
+			msg := toolregistry.NewToolResultDeclaredServiceErrorMessage(
+				"token-1", "call-1", "test_tool", tc.code, tc.err, declaredKind,
 			)
 			require.NotNil(t, msg.Error)
 			require.NotNil(t, msg.Error.Failure)

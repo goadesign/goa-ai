@@ -799,12 +799,16 @@ type (
 		NextCursorField string
 	}
 
-	// DeclaredErrorData captures metadata about an error declared on a bound service method.
+	// DeclaredErrorData captures the precomputed planner failure classification
+	// for an eligible non-fault, non-timeout error declared on a bound Goa
+	// service method.
 	DeclaredErrorData struct {
-		Name      string
-		Temporary bool
-		Fault     bool
-		Timeout   bool
+		// Name is the Goa error name declared on the bound service method.
+		Name string
+		// FailureKindConst is the planner.FailureKind constant identifier
+		// ("FailureDomainRejection" or "FailureUnavailable") emitted in generated
+		// service executors and providers.
+		FailureKindConst string
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,

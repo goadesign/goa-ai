@@ -324,13 +324,24 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		// Capture user type locations when specified via struct:pkg:path.
 		tool.MethodPayloadLoc = md.PayloadLoc
 		tool.MethodResultLoc = md.ResultLoc
-		for _, ed := range md.Errors {
-			tool.DeclaredErrors = append(tool.DeclaredErrors, &DeclaredErrorData{
-				Name:      ed.ErrName,
-				Temporary: ed.Temporary,
-				Fault:     ed.Fault,
-				Timeout:   ed.Timeout,
-			})
+		task, err := mcpinput.TaskExchange(expr.Method)
+		if err != nil {
+			return nil, err
+		}
+		if task == nil {
+			for _, ed := range md.Errors {
+				if ed.Fault || ed.Timeout {
+					continue
+				}
+				kindConst := "FailureDomainRejection"
+				if ed.Temporary {
+					kindConst = "FailureUnavailable"
+				}
+				tool.DeclaredErrors = append(tool.DeclaredErrors, &DeclaredErrorData{
+					Name:             ed.ErrName,
+					FailureKindConst: kindConst,
+				})
+			}
 		}
 		break
 	}

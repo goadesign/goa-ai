@@ -237,7 +237,11 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	if parts.structuredOutputToolName != "" {
 		if err := reifyStructuredOutputTool(resp, parts.structuredOutputToolName); err != nil {
-			return nil, contract.RejectResponse(model.OutputValidationStructuredOutput, resp, err)
+			kind := model.OutputValidationStructuredOutput
+			if resp.OutputLimited {
+				kind = model.OutputValidationOutputLimited
+			}
+			return nil, contract.RejectResponse(kind, resp, err)
 		}
 	}
 	return resp, nil

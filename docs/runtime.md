@@ -389,9 +389,14 @@ Typed completion helpers are intentionally strict:
   decode that accepted value. They never restart after exposing previews; an
   invalid stream returns the same non-retryable
   output-contract error without exposing the final value.
-- If a streaming provider reports that generation stopped at its output limit,
-  previews already returned remain provisional. The final completion is not
-  returned, and `Value` remains unavailable.
+- If a unary or streaming provider reports that generation stopped at its output
+  limit (`Response.OutputLimited == true`), a final completion whose JSON bytes
+  satisfy the request schema and generated codec is accepted and decoded while
+  preserving `Response.OutputLimited == true` on `ModelResponse`. If the
+  response stopped at the output limit without a completion or with incomplete,
+  schema-invalid, or codec-rejected JSON, previews already returned remain
+  provisional, `Value` remains unavailable, and validation rejects the call with
+  `model.OutputValidationOutputLimited`.
 - `Value` becomes available only after `Recv` reaches and validates the final
   completion; there is no separate decoder that can accept an unchecked chunk.
 - Completion streams use their generated typed wrapper directly; do not route
@@ -5221,6 +5226,12 @@ There are two ways to enable confirmation:
   runtime. This can require confirmation for additional tools and/or override the design-time behavior
   for specific tool IDs.
 
+When a runtime `ToolConfirmation.Prompt` or `ToolConfirmation.DeniedResult` callback returns an error that implements `planner.ToolFailureProvider`, the runtime treats that error as a pre-confirmation refusal rather than a workflow fault:
+
+- In an agent turn (`workflow_turn.go`), refused tool calls do not execute the tool activity and do not emit an `await_confirmation` suspension. Any unconfirmed sibling tool calls in the same turn still execute immediately, and the runtime records the refused call's cloned `planner.ToolFailure` alongside sibling results in the original tool-call order before resuming the planner (or suspending only for remaining calls that still require human confirmation).
+- In a direct single-tool operation (`registered_root_workflow.go`), a pre-confirmation refusal emits the scheduled and failed tool result hook events and fails the operation with the refusal's `ToolError` without executing the tool or awaiting confirmation.
+- Ordinary callback errors that do not implement `planner.ToolFailureProvider` (such as template rendering errors or context cancellation) remain fatal workflow errors.
+
 At execution time, the workflow:
 
 - Emits an out-of-band confirmation request (using `AwaitConfirmation`) before executing the
@@ -5359,9 +5370,13 @@ validation-cause text without copying that text into Temporal or the run log.
 Public error text remains fixed and generic; the fingerprint preserves durable
 distinction between different causes without storing either cause.
 `OutputValidationKind` is present only when an exact
-`model.OutputValidationError` caused the rejection. Its eight closed values are
+`model.OutputValidationError` caused the rejection. Its nine closed values are
 `response_shape`, `output_bounds`, `tool_identity`, `tool_arguments`,
-`tool_choice`, `structured_output`, `stream_protocol`, and `usage`.
+`tool_choice`, `structured_output`, `output_limited`, `stream_protocol`, and
+`usage`. Because the remote model gateway validates `OutputValidationKind`
+against a closed enum, upgrade gateway clients before or together with gateway
+servers that emit `output_limited`; older gateway clients reject unknown enum
+values.
 Planner-authored policy rejections and older records leave it empty.
 `ModelResponsePresent` distinguishes a complete response from a
 chunk-level failure. `ModelResponseFingerprintVersion` identifies the stable
@@ -8619,6 +8634,45 @@ those issues in `planner.ToolFailure`. The workflow supplies the original
 model-authored input and generated example only after matching the saved tool
 call ID. This execution-time path does not change which model-response decoder
 errors qualify for correction.
+
+When a bound Goa service method declares non-fault, non-timeout domain errors in
+`design/design.go` (for example, `Error("invalid_state")` or a `Temporary()`
+domain error), `goa gen` specializes those eligible error names into the
+generated service executor (`service_executor.go`) and tool provider
+(`provider.go`). Task-backed methods (`TaskExchange`) are excluded and keep
+their existing task observation lifecycle. Regenerate agent and toolset packages
+with `goa gen` after changing method `Error(...)` declarations so generated
+switches stay in sync. At runtime, error classification follows path-specific
+precedence:
+
+- **In-process service executor (`service_executor.go`)**:
+  1. An error implementing `planner.ToolFailureProvider` wins first.
+  2. Otherwise, `toolregistry.EligibleDeclaredToolFailure` walks single-error
+     unwrap chains (`Unwrap() error`; multi-error joins `Unwrap() []error` are
+     rejected) for a `goa.GoaErrorNamer`. If the error is a `*goa.ServiceError`
+     with runtime `Fault`, `Timeout`, `len(History()) > 1`, or field-level
+     `ValidationIssues`, it is ineligible and falls through to
+     `FailureInternal` (`RecoveryFinish`). If its `GoaErrorName()` matches an
+     eligible declared error, it maps to `RecoveryReplan` with
+     `FailureUnavailable` (when declared `Temporary()`) or
+     `FailureDomainRejection` (otherwise).
+  3. All other errors map to `FailureInternal` (`RecoveryFinish`).
+- **Remote tool registry provider (`provider.go`)**:
+  1. `toolregistry.NewToolResultDeclaredServiceErrorMessage` checks
+     `planner.ToolFailureProvider` first.
+  2. Field-level `ValidationIssues(err)` map to `FailureInvalidCall`
+     (`RecoveryCorrectCall`).
+  3. Explicit wire codes `"rate_limited"` (`FailureRateLimited` +
+     `RecoveryReplan`) and `"timeout"` (`FailureTimeout` + `RecoveryFinish`)
+     map before declared-error lookup when not a runtime fault.
+  4. Eligible declared errors map via `EligibleDeclaredToolFailure` to
+     `FailureDomainRejection` or `FailureUnavailable` with `RecoveryReplan`.
+  5. All other errors map to `FailureInternal` (`RecoveryFinish`).
+
+Note that when a tool fails with `RecoveryReplan` (`FailureDomainRejection` or
+`FailureUnavailable`), the runtime's next planner turn removes that failed tool
+from the advertised tool catalog so the model replans using the remaining tools
+or responds directly to the user.
 
 ---
 

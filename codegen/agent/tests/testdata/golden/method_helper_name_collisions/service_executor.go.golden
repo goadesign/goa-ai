@@ -17,7 +17,6 @@ import (
 	planner "goa.design/goa-ai/runtime/agent/planner"
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
 	tools "goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // This file calls the Goa service methods used by helpers tools.
@@ -419,25 +418,18 @@ func failedServiceToolResult(name tools.Ident, err error) *planner.ToolResult {
 	}
 }
 
-// failedServiceCallResult preserves a failure supplied by the service or
-// maps an eligible declared error to a domain rejection or unavailable failure.
+// failedServiceCallResult preserves a failure supplied by the service.
 // Other errors become internal failures that end the run.
-func failedServiceCallResult(call *runtime.ToolCall, err error, declared ...toolregistry.DeclaredErrorSpec) *planner.ToolResult {
+func failedServiceCallResult(call *runtime.ToolCall, err error) *planner.ToolResult {
 	var provider planner.ToolFailureProvider
-	if errors.As(err, &provider) {
-		failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
-		return &planner.ToolResult{
-			Name:    call.Name,
-			Failure: failure,
-		}
+	if !errors.As(err, &provider) {
+		return failedServiceToolResult(call.Name, err)
 	}
-	if eligible := toolregistry.EligibleDeclaredToolFailure(err, declared); eligible != nil {
-		return &planner.ToolResult{
-			Name:    call.Name,
-			Failure: eligible,
-		}
+	failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
+	return &planner.ToolResult{
+		Name:    call.Name,
+		Failure: failure,
 	}
-	return failedServiceToolResult(call.Name, err)
 }
 
 // invalidServiceToolCall returns the validation issues needed to correct a tool request.

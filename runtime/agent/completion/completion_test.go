@@ -414,6 +414,37 @@ func TestCompletePreservesMalformedOutputPrecedenceWhenOutputLimited(t *testing.
 	requireCompletionResponseEqual(t, rejectedResponse, retained)
 }
 
+func TestCompleteClassifiesMissingCompletionAtOutputLimit(t *testing.T) {
+	limitedEmpty := &model.Response{
+		StopReason:    outputLimitStopReason,
+		OutputLimited: true,
+		Usage:         model.TokenUsage{InputTokens: 3, OutputTokens: 5, TotalTokens: 8},
+	}
+	response, err := Complete(
+		t.Context(),
+		mustCompletionClient(t, &recordingCompletionClient{response: limitedEmpty}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.Nil(t, response)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, model.OutputValidationOutputLimited, validationErr.Kind())
+
+	normalEmpty := &model.Response{
+		StopReason: "stop",
+	}
+	response, err = Complete(
+		t.Context(),
+		mustCompletionClient(t, &recordingCompletionClient{response: normalEmpty}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.Nil(t, response)
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, model.OutputValidationResponseShape, validationErr.Kind())
+}
+
 func TestCompleteObserverMutationCannotBreakModelResponseValueAgreement(t *testing.T) {
 	const original = `{"assistant_text":"canonical"}`
 	raw := &mutatingCompletionObserverProvider{
@@ -962,6 +993,83 @@ func TestStreamRejectsOutputLimitedResponseWithoutFinalCompletion(t *testing.T) 
 	require.Equal(t, err, replayErr)
 	_, ok = stream.Value()
 	require.False(t, ok)
+}
+
+func TestStreamClassifiesSchemaAndCodecRejectionAtOutputLimit(t *testing.T) {
+	tests := []struct {
+		name          string
+		payload       string
+		stopReason    string
+		outputLimited bool
+		wantKind      model.OutputValidationKind
+	}{
+		{
+			name:          "schema invalid JSON at output limit",
+			payload:       `{}`,
+			stopReason:    outputLimitStopReason,
+			outputLimited: true,
+			wantKind:      model.OutputValidationOutputLimited,
+		},
+		{
+			name:          "schema invalid JSON at ordinary stop",
+			payload:       `{}`,
+			stopReason:    "stop",
+			outputLimited: false,
+			wantKind:      model.OutputValidationStructuredOutput,
+		},
+		{
+			name:          "codec rejected JSON at output limit",
+			payload:       `{"assistant_text":7}`,
+			stopReason:    outputLimitStopReason,
+			outputLimited: true,
+			wantKind:      model.OutputValidationOutputLimited,
+		},
+		{
+			name:          "codec rejected JSON at ordinary stop",
+			payload:       `{"assistant_text":7}`,
+			stopReason:    "stop",
+			outputLimited: false,
+			wantKind:      model.OutputValidationStructuredOutput,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rejectedResponse := completionResponse(tc.payload)
+			rejectedResponse.StopReason = tc.stopReason
+			rejectedResponse.OutputLimited = tc.outputLimited
+			upstream := &scriptedStreamer{
+				response: rejectedResponse,
+				results: []recvResult{
+					{chunk: model.CompletionChunk{Completion: model.Completion{
+						Name:    "draft_from_transcript",
+						Payload: []byte(tc.payload),
+					}}},
+					{chunk: model.StopChunk{
+						Reason:        tc.stopReason,
+						OutputLimited: tc.outputLimited,
+					}},
+					{err: io.EOF},
+				},
+			}
+			stream, err := Stream(
+				t.Context(),
+				mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
+				&model.Request{},
+				testCompletionSpec(),
+			)
+			require.NoError(t, err)
+
+			final, err := stream.Recv()
+			require.Nil(t, final)
+			var validationErr *model.OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, tc.wantKind, validationErr.Kind())
+			require.Nil(t, stream.Response())
+			_, ok := stream.Value()
+			require.False(t, ok)
+		})
+	}
 }
 
 func TestStreamWithholdsTypedValueWhenFinalizationFails(t *testing.T) {

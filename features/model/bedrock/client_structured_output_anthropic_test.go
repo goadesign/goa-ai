@@ -318,6 +318,74 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	require.Empty(t, resp.ToolCalls(), "the canonical response must not surface tool calls")
 }
 
+// TestCompleteAnthropicStructuredOutputMissingToolClassifiesStopCondition proves
+// that when Claude 4.6 stops without emitting the forced structured-output tool
+// call, unary Complete classifies max_tokens as output_limited and an ordinary
+// stop as structured_output.
+func TestCompleteAnthropicStructuredOutputMissingToolClassifiesStopCondition(t *testing.T) {
+	tests := []struct {
+		name       string
+		stopReason brtypes.StopReason
+		wantKind   model.OutputValidationKind
+	}{
+		{
+			name:       "max tokens after reasoning without tool call",
+			stopReason: brtypes.StopReasonMaxTokens,
+			wantKind:   model.OutputValidationOutputLimited,
+		},
+		{
+			name:       "ordinary stop after reasoning without tool call",
+			stopReason: brtypes.StopReasonEndTurn,
+			wantKind:   model.OutputValidationStructuredOutput,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := &recordingConverseRuntime{
+				output: &bedrockruntime.ConverseOutput{
+					StopReason: tc.stopReason,
+					Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+						Role: brtypes.ConversationRoleAssistant,
+						Content: []brtypes.ContentBlock{
+							&brtypes.ContentBlockMemberReasoningContent{
+								Value: &brtypes.ReasoningContentBlockMemberReasoningText{
+									Value: brtypes.ReasoningTextBlock{
+										Text:      aws.String("thinking exhausted budget"),
+										Signature: aws.String("signature"),
+									},
+								},
+							},
+						},
+					}},
+				},
+			}
+			client, err := model.NewClient(&provider{
+				defaultModel: "global.anthropic.claude-opus-4-6-v1",
+				runtime:      runtime,
+			})
+			require.NoError(t, err)
+			req := &model.Request{
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+				}},
+				StructuredOutput: &model.StructuredOutput{
+					Name:        "complete_draft",
+					Description: "Return the completed task draft.",
+					Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+				},
+			}
+
+			resp, err := client.Complete(t.Context(), req)
+			require.Nil(t, resp)
+			var validationErr *model.OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, tc.wantKind, validationErr.Kind())
+		})
+	}
+}
+
 // TestCompleteRejectsUnsupportedAnthropicStructuredOutputBeforeInference proves
 // that local JSON validation never substitutes for provider enforcement.
 func TestCompleteRejectsUnsupportedAnthropicStructuredOutputBeforeInference(t *testing.T) {

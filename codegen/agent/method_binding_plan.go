@@ -88,6 +88,9 @@ func planProviderImports(
 	if hasBoundsTool(tools) {
 		fixed = append(fixed, goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent"))
 	}
+	if hasDeclaredErrorTool(tools) {
+		fixed = append(fixed, goacodegen.NewImport("planner", "goa.design/goa-ai/runtime/agent/planner"))
+	}
 	fixed = append(fixed, goacodegen.NewImport("run", "goa.design/goa-ai/runtime/agent/run"))
 	for _, tool := range tools {
 		if tool.Method != nil && len(tool.InjectedFields) > 0 {
@@ -238,6 +241,27 @@ func hasInputExchangeTool(tools []*agent.ToolExpr) bool {
 	for _, tool := range tools {
 		if tool.Method != nil && (len(tool.Method.Meta[mcpinput.ExchangeMetaKey]) > 0 || len(tool.Method.Meta[mcpinput.TaskExchangeMetaKey]) > 0) {
 			return true
+		}
+	}
+	return false
+}
+
+// hasDeclaredErrorTool reports whether any non-task method-backed tool in tools
+// declares at least one non-fault, non-timeout service error.
+func hasDeclaredErrorTool(tools []*agent.ToolExpr) bool {
+	for _, tool := range tools {
+		if tool.Method == nil || len(tool.Method.Meta[mcpinput.TaskExchangeMetaKey]) > 0 {
+			continue
+		}
+		for _, ee := range tool.Method.Errors {
+			if ee == nil || ee.AttributeExpr == nil {
+				continue
+			}
+			_, fault := ee.Meta["goa:error:fault"]
+			_, timeout := ee.Meta["goa:error:timeout"]
+			if !fault && !timeout {
+				return true
+			}
 		}
 	}
 	return false

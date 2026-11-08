@@ -14,7 +14,9 @@ import (
 
 type toolProviderFileData struct {
 	// MCPPackage names the planned import used for typed host continuation.
-	MCPPackage     string
+	MCPPackage string
+	// PlannerPackage names the planned import used for declared service error mapping.
+	PlannerPackage string
 	PackageName    string
 	ServiceTypeRef string
 	Tools          []*ToolData
@@ -250,6 +252,7 @@ func toolsetProviderFile(ts *ToolsetData) *codegen.File {
 			Source: agentsTemplates.Read(toolProviderFileT),
 			Data: toolProviderFileData{
 				MCPPackage:     ts.specs.mcpPackage,
+				PlannerPackage: ts.specs.plannerPackage,
 				PackageName:    ts.SpecsPackageName,
 				ServiceTypeRef: ts.specs.serviceTypeRef,
 				Tools:          ts.Tools,
