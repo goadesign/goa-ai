@@ -90,6 +90,8 @@ func encodeTools(defs []*model.ToolDefinition, modelID string, exact bool) ([]re
 	return tools, codec, nil
 }
 
+// encodeToolChoice maps the requested mode and canonical tool name to the
+// provider's choice, rejecting unsupported modes or required unadvertised names.
 func encodeToolChoice(
 	choice *model.ToolChoice,
 	canonicalToProvider map[string]string,
