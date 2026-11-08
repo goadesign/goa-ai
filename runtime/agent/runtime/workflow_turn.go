@@ -84,9 +84,8 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
 	outcomes, timedOut, executionErr := l.executeImmediateToolCalls(program.immediate, result.ExpectedChildren, nil)
 	records, resultErr := stepToolRecordsAfterExecution(program.immediate, outcomes, executionErr)
-	refusedRecords := make([]stepToolRecord, 0, len(program.refusals))
 	for _, refusal := range program.refusals {
-		refusedRecords = append(refusedRecords, stepToolRecord{
+		records = append(records, stepToolRecord{
 			call:             refusal.call,
 			scheduleRequired: true,
 			scheduleExact:    true,
@@ -97,9 +96,8 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 			},
 		})
 	}
-	allRecords := append(records, refusedRecords...)
-	l.finishToolBatches(allRecords)
-	orderedRecords, err := canonicalStepToolRecords(allowed, allRecords)
+	l.finishToolBatches(records)
+	orderedRecords, err := canonicalStepToolRecords(allowed, records)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -522,11 +520,12 @@ func (r *Runtime) recordStepToolResults(
 			record.resultPublished = true
 		}
 		if record.resultRunID == "" {
-			if record.resultRecord != nil {
+			switch {
+			case record.resultRecord != nil:
 				record.resultRunID = record.resultRecord.RunID
-			} else if record.call.RunID != "" {
+			case record.call.RunID != "":
 				record.resultRunID = record.call.RunID
-			} else {
+			default:
 				record.resultRunID = base.RunContext.RunID
 			}
 		}

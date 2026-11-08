@@ -408,16 +408,17 @@ func NewToolResultServiceErrorMessage(
 	out := NewToolResultErrorMessage(registrationToken, toolUseID, code, err.Error())
 	issues := ValidationIssues(err)
 	var provider planner.ToolFailureProvider
-	if errors.As(err, &provider) {
+	switch {
+	case errors.As(err, &provider):
 		out.Error.Failure = planner.CloneToolFailure(provider.ToolFailure(tool))
 		if out.Error.Failure.Recovery.Action == planner.RecoveryCorrectCall &&
 			len(out.Error.Failure.Recovery.Issues) == 0 {
 			out.Error.Failure.Recovery.Issues = tools.CloneFieldIssues(issues)
 		}
-	} else if len(issues) > 0 {
+	case len(issues) > 0:
 		out.Error.Failure = defaultToolFailure("invalid_arguments", err.Error())
 		out.Error.Failure.Recovery.Issues = tools.CloneFieldIssues(issues)
-	} else if isDefaultFallthrough(code, out.Error.Failure) {
+	case isDefaultFallthrough(code, out.Error.Failure):
 		if eligible := EligibleDeclaredToolFailure(err, declared); eligible != nil {
 			out.Error.Failure = eligible
 		}
@@ -453,6 +454,7 @@ func EligibleDeclaredToolFailure(err error, declared []DeclaredErrorSpec) *plann
 				return nil
 			}
 
+			//nolint:errorlint // current is the exact error node in the manual unwrap walk.
 			if se, ok := current.(*goa.ServiceError); ok && se != nil {
 				if se.Fault || se.Timeout || len(se.History()) > 1 {
 					return nil

@@ -30,7 +30,7 @@ func (e *refusalTestError) Error() string {
 	return "refusal"
 }
 
-func (e *refusalTestError) ToolFailure(name tools.Ident) *planner.ToolFailure {
+func (e *refusalTestError) ToolFailure(_ tools.Ident) *planner.ToolFailure {
 	return e.failure
 }
 
