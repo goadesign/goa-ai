@@ -788,14 +788,21 @@ own omission rules. These checks apply only to strict provider compilation,
 including structured output; they do not restrict internal runtime tools or
 change complete-schema Bedrock generation.
 
-For function tools that need optional-member removal, the adapter appends:
-“In the strict tool schema, an optional field that should be omitted is
-represented by null. Use null when the tool instructions say to omit a field.”
+For function tools and structured responses that need optional-member removal,
+the adapter appends this explanation to the provider-facing description:
+“In the strict schema, an optional field that should be omitted is represented
+by null. Use null when the instructions say to omit a field.”
+For structured responses, the response-format description also includes the
+caller's authored `StructuredOutput.Description`, which explains the response's
+purpose. The adapter preserves that text whether or not omission conversion is
+needed. If neither an authored description nor the explanation is needed, the
+response-format description remains absent.
+
 The caller's description, schema, examples, and runtime correction guidance
-remain in their original form. Those examples describe decoded arguments;
-they may omit fields that strict wire arguments must supply as null. The note
-explains how to follow an instruction to omit a field. It does not change
-domain rules or repair an explicit value chosen by the model.
+remain in their original form. Those examples describe decoded arguments or
+responses; they may omit fields that strict wire JSON must supply as null.
+The explanation describes how to follow an instruction to omit a field. It
+does not change domain rules or repair an explicit value chosen by the model.
 
 Before upgrading a strict client, check custom tool and structured-output
 schemas against these restrictions. If null has no distinct domain meaning,
