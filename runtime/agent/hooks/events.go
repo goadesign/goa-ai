@@ -1104,6 +1104,7 @@ func validOutputValidationKind(kind model.OutputValidationKind) bool {
 		model.OutputValidationToolArguments,
 		model.OutputValidationToolChoice,
 		model.OutputValidationStructuredOutput,
+		model.OutputValidationOutputLimited,
 		model.OutputValidationStreamProtocol,
 		model.OutputValidationUsage:
 		return true

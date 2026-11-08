@@ -46,6 +46,10 @@ const (
 	// was missing, malformed, or failed its response schema or generated codec.
 	OutputValidationStructuredOutput OutputValidationKind = "structured_output"
 
+	// OutputValidationOutputLimited means a requested structured completion
+	// failed validation and the provider reported that output hit the token limit.
+	OutputValidationOutputLimited OutputValidationKind = "output_limited"
+
 	// OutputValidationStreamProtocol means streamed events were out of order or
 	// did not reconcile with the provider's complete response.
 	OutputValidationStreamProtocol OutputValidationKind = "stream_protocol"
@@ -65,6 +69,7 @@ func validOutputValidationKind(kind OutputValidationKind) bool {
 		OutputValidationToolArguments,
 		OutputValidationToolChoice,
 		OutputValidationStructuredOutput,
+		OutputValidationOutputLimited,
 		OutputValidationStreamProtocol,
 		OutputValidationUsage:
 		return true

@@ -569,6 +569,36 @@ func TestStreamStructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 	assert.Contains(t, errors.Unwrap(validationErr).Error(), "not valid JSON")
 }
 
+func TestStreamStructuredOutputOutputLimitedWhenTruncated(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{Text: `{"assistant_text":`},
+		}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonMaxTokens}}},
+	}}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	request := &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "draft_from_transcript",
+			Schema: []byte(`{"type":"object"}`),
+		},
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	s, err := cl.Stream(context.Background(), request)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, s.Close()) }()
+
+	err = drainToError(t, s)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Equal(t, model.OutputValidationOutputLimited, validationErr.Kind())
+}
+
 func TestStreamStructuredOutputRejectsEmptyAccumulation(t *testing.T) {
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
 		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},

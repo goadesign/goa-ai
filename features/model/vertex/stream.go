@@ -293,17 +293,20 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 		}
 		payload, perr := finalStructuredCompletionPayload(accumulated)
 		if perr != nil {
-			s.setErr(outputvalidation.New(
-				model.OutputValidationStructuredOutput,
-				fmt.Errorf("vertex: structured output %q: %w", prep.structuredOutput.Name, perr),
-			))
-			return
+			if !vertexOutputLimited(stopReason) {
+				s.setErr(outputvalidation.New(
+					model.OutputValidationStructuredOutput,
+					fmt.Errorf("vertex: structured output %q: %w", prep.structuredOutput.Name, perr),
+				))
+				return
+			}
+		} else {
+			s.emit(model.CompletionChunk{Completion: model.Completion{
+				Name:    prep.structuredOutput.Name,
+				Payload: payload,
+			}})
+			s.assistant.Parts = append(s.assistant.Parts, model.TextPart{Text: string(payload)})
 		}
-		s.emit(model.CompletionChunk{Completion: model.Completion{
-			Name:    prep.structuredOutput.Name,
-			Payload: payload,
-		}})
-		s.assistant.Parts = append(s.assistant.Parts, model.TextPart{Text: string(payload)})
 	}
 	if usageSeen {
 		s.emit(model.UsageChunk{Usage: latestUsage})

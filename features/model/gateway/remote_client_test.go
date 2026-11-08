@@ -201,6 +201,29 @@ func TestRemoteClientPreservesTypedTransportOutputFailure(t *testing.T) {
 	require.ErrorAs(t, err, &validationErr)
 }
 
+func TestRemoteClientPreservesOutputLimitedFailure(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	transportErr := contract.RejectResponse(
+		model.OutputValidationOutputLimited,
+		nil,
+		errors.New("generation stopped at token limit"),
+	)
+	client := requireRemoteClient(t,
+		func(context.Context, *model.Request) (*model.Response, error) {
+			return nil, transportErr
+		},
+		nil,
+	)
+
+	response, err := client.Complete(t.Context(), &model.Request{})
+	require.Nil(t, response)
+	require.ErrorIs(t, err, transportErr)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, model.OutputValidationOutputLimited, validationErr.Kind())
+}
+
 func TestRemoteClientStreamKeepsPreTransportRequestContract(t *testing.T) {
 	request := &model.Request{}
 	client := requireRemoteClient(t,

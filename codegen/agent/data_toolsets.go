@@ -324,6 +324,14 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		// Capture user type locations when specified via struct:pkg:path.
 		tool.MethodPayloadLoc = md.PayloadLoc
 		tool.MethodResultLoc = md.ResultLoc
+		for _, ed := range md.Errors {
+			tool.DeclaredErrors = append(tool.DeclaredErrors, &DeclaredErrorData{
+				Name:      ed.ErrName,
+				Temporary: ed.Temporary,
+				Fault:     ed.Fault,
+				Timeout:   ed.Timeout,
+			})
+		}
 		break
 	}
 	if tool.MethodGoName == "" {

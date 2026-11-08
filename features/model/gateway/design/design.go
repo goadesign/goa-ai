@@ -416,6 +416,7 @@ var ValidationErrorDetail = Type("ValidationErrorDetail", func() {
 			"tool_arguments",
 			"tool_choice",
 			"structured_output",
+			"output_limited",
 			"stream_protocol",
 			"usage",
 		)

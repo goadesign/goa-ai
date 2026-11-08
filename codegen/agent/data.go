@@ -748,6 +748,9 @@ type (
 		// when this tool is part of an exported toolset.
 		PassthroughMethod string
 
+		// DeclaredErrors lists the errors declared on the bound Goa method.
+		DeclaredErrors []*DeclaredErrorData
+
 		// method is the bound Goa method whose finalized plan supplies selectors
 		// and type references for generated service calls.
 		method *goaexpr.MethodExpr
@@ -794,6 +797,14 @@ type (
 		CursorField string
 		// NextCursorField is the model-facing JSON result field name.
 		NextCursorField string
+	}
+
+	// DeclaredErrorData captures metadata about an error declared on a bound service method.
+	DeclaredErrorData struct {
+		Name      string
+		Temporary bool
+		Fault     bool
+		Timeout   bool
 	}
 
 	// RuntimeData contains the workflow and activity artifacts generated for an agent,

@@ -281,6 +281,12 @@ func TestChunkProcessor_StructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 	err = cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStop{
 		Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &idx},
 	})
+	require.NoError(t, err)
+	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{
+		Value: brtypes.MessageStopEvent{
+			StopReason: brtypes.StopReasonEndTurn,
+		},
+	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not valid JSON")
 }

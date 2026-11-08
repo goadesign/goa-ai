@@ -422,9 +422,18 @@ func (c *RequestContract) validateOwnedResponse(response *Response) (OutputValid
 	if c.stream.structuredOutputPresent {
 		payload, err := structuredOutputResponsePayload(response)
 		if err != nil {
+			if response.OutputLimited {
+				return OutputValidationOutputLimited, err
+			}
 			return OutputValidationStructuredOutput, err
 		}
 		if err := c.structuredValidate(payload); err != nil {
+			if response.OutputLimited {
+				return OutputValidationOutputLimited, fmt.Errorf(
+					"structured output response does not match its schema: %w",
+					err,
+				)
+			}
 			return OutputValidationStructuredOutput, fmt.Errorf(
 				"structured output response does not match its schema: %w",
 				err,
@@ -433,6 +442,9 @@ func (c *RequestContract) validateOwnedResponse(response *Response) (OutputValid
 	}
 	if c.completionValidate != nil {
 		if err := c.completionValidate(response, nil); err != nil {
+			if response.OutputLimited {
+				return OutputValidationOutputLimited, err
+			}
 			return OutputValidationStructuredOutput, err
 		}
 	}

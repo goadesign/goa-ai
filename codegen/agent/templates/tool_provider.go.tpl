@@ -165,7 +165,25 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		err = p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
 {{- end }}
 		if err != nil {
+{{- if .DeclaredErrors }}
+			return toolregistry.NewToolResultServiceErrorMessage(
+				msg.RegistrationToken,
+				msg.ToolUseID,
+				msg.Tool,
+				toolErrorCode(err),
+				err,
+				{{- range .DeclaredErrors }}
+				toolregistry.DeclaredErrorSpec{
+					Name: {{ printf "%q" .Name }},
+					Temporary: {{ .Temporary }},
+					Fault: {{ .Fault }},
+					Timeout: {{ .Timeout }},
+				},
+				{{- end }}
+			), nil
+{{- else }}
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
+{{- end }}
 		}
 {{- if .ReadInputOutcome }}
         completed, pending, err := {{ .ReadInputOutcome }}(methodOut)

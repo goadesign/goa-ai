@@ -464,6 +464,20 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, tools.Ident("svc.lookup"), toolName)
 
+	// 1b. OutputValidationError with OutputValidationOutputLimited round-trip.
+	outputLimitedErr := contract.RejectProviderOutput(
+		model.OutputValidationOutputLimited,
+		&model.TokenUsage{InputTokens: 5, OutputTokens: 10, TotalTokens: 15},
+		errors.New("generation stopped at token limit before completion"),
+	)
+	completeErr = outputLimitedErr
+	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
+	gotValidation = nil
+	require.ErrorAs(t, err, &gotValidation)
+	require.Equal(t, model.OutputValidationOutputLimited, gotValidation.Kind())
+	require.NotNil(t, gotValidation.Usage())
+	require.Equal(t, 15, gotValidation.Usage().TotalTokens)
+
 	// 2. Shared OutputValidationError node identity in errors.Join.
 	completeErr = errors.Join(validationErr, validationErr)
 	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})

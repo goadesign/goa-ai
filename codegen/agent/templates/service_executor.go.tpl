@@ -273,10 +273,25 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
             {{- else }}
             methodOut, err := cfg.{{ .CallerField }}(ctx, methodIn)
             if err != nil {
+                {{- if .DeclaredErrors }}
+                return runtime.Executed({{ $.Names.FailedCallResult }}(
+                    call,
+                    err,
+                    {{- range .DeclaredErrors }}
+                    toolregistry.DeclaredErrorSpec{
+                        Name: {{ printf "%q" .Name }},
+                        Temporary: {{ .Temporary }},
+                        Fault: {{ .Fault }},
+                        Timeout: {{ .Timeout }},
+                    },
+                    {{- end }}
+                )), nil
+                {{- else }}
                 return runtime.Executed({{ $.Names.FailedCallResult }}(
                     call,
                     err,
                 )), nil
+                {{- end }}
             }
             {{- if .ReadInputOutcome }}
             nativeResult, ok := methodOut.({{ .NativeResultTypeRef }})
@@ -393,18 +408,25 @@ func {{ .Names.FailedToolResult }}(name tools.Ident, err error) *planner.ToolRes
     }
 }
 
-// {{ .Names.FailedCallResult }} preserves a failure supplied by the service.
+// {{ .Names.FailedCallResult }} preserves a failure supplied by the service or
+// maps an eligible declared error to a domain rejection or unavailable failure.
 // Other errors become internal failures that end the run.
-func {{ .Names.FailedCallResult }}(call *runtime.ToolCall, err error) *planner.ToolResult {
+func {{ .Names.FailedCallResult }}(call *runtime.ToolCall, err error, declared ...toolregistry.DeclaredErrorSpec) *planner.ToolResult {
     var provider planner.ToolFailureProvider
-    if !errors.As(err, &provider) {
-        return {{ .Names.FailedToolResult }}(call.Name, err)
+    if errors.As(err, &provider) {
+        failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
+        return &planner.ToolResult{
+            Name:    call.Name,
+            Failure: failure,
+        }
     }
-    failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
-    return &planner.ToolResult{
-        Name:    call.Name,
-        Failure: failure,
+    if eligible := toolregistry.EligibleDeclaredToolFailure(err, declared); eligible != nil {
+        return &planner.ToolResult{
+            Name:    call.Name,
+            Failure: eligible,
+        }
     }
+    return {{ .Names.FailedToolResult }}(call.Name, err)
 }
 
 // {{ .Names.InvalidToolCall }} returns the validation issues needed to correct a tool request.

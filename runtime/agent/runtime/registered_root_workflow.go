@@ -207,10 +207,58 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 		}
 	}
 	if state.predecessor == "" {
-		call := ToolCall{TextOnly: state.call.TextOnly, Name: state.call.ToolName, ToolCallID: state.call.ToolCallID, Payload: state.call.Payload, Registry: state.call.Registry}
+		call := ToolCall{
+			TextOnly:   state.call.TextOnly,
+			Name:       state.call.ToolName,
+			ToolCallID: state.call.ToolCallID,
+			Payload:    state.call.Payload,
+			Registry:   state.call.Registry,
+			RunID:      input.RunID,
+			SessionID:  input.SessionID,
+			Labels:     input.Labels,
+			Subject:    input.Subject,
+		}
 		plan, required, err := r.confirmationPlan(wf.Context(), &call)
 		if err != nil {
 			return nil, err
+		}
+		if plan != nil && plan.Refusal != nil {
+			event := &api.ToolEvent{
+				Name:       state.call.ToolName,
+				ToolCallID: state.call.ToolCallID,
+				Failure:    plan.Refusal,
+			}
+			finalization.operationResult, err = operationResultFromToolEvent(event)
+			if err != nil {
+				return nil, err
+			}
+			record := hooks.NewToolResultReceivedEvent(
+				input.RunID,
+				input.Subject,
+				input.SessionID,
+				state.call.RunID,
+				state.call.ToolName,
+				state.call.ToolCallID,
+				"",
+				nil,
+				nil,
+				nil,
+				"",
+				nil,
+				0,
+				nil,
+				plan.Refusal,
+			)
+			if err := r.publishHookWithOptions(wf.Detached().Context(), record, "", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true}}); err != nil {
+				return nil, err
+			}
+			output := &api.RunOutput{
+				Subject:         input.Subject,
+				RunID:           input.RunID,
+				FinalToolResult: event,
+				ToolCount:       1,
+			}
+			return output, &selectedOperationError{cause: plan.Refusal.Error}
 		}
 		if required {
 			spec, _, err := r.callSpec(call)

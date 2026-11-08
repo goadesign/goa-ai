@@ -321,9 +321,9 @@ type anthropicChunkProcessor struct {
 	outputUsageReported bool
 	usageChunkEmitted   bool
 	started             bool
-	complete       bool
-	retainedBytes  int
-	retainedValues int
+	complete            bool
+	retainedBytes       int
+	retainedValues      int
 }
 
 func newAnthropicChunkProcessor(
@@ -676,26 +676,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		delete(p.openBlocks, idx)
 		delete(p.searchBlocks, idx)
 		if p.completion != nil && p.completion.index == idx {
-			payload, err := p.completion.finalPayload()
-			if err != nil {
-				return outputvalidation.New(
-					model.OutputValidationStructuredOutput,
-					fmt.Errorf(
-						"anthropic stream: finalize structured output %q: %w",
-						p.completion.name,
-						err,
-					),
-				)
-			}
-			completion := p.completion
-			p.completion = nil
-			p.completionSeen = true
-			return p.emit(model.CompletionChunk{
-				Completion: model.Completion{
-					Name:    completion.name,
-					Payload: payload,
-				},
-			})
+			return nil
 		}
 		if tb := p.thinkingBlocks[idx]; tb != nil {
 			delete(p.thinkingBlocks, idx)
@@ -818,18 +799,47 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				errors.New("anthropic stream: message stopped without a stop reason"),
 			)
 		}
+		outputLimited := anthropicOutputLimited(p.stopReason)
+		if p.completion != nil {
+			payload, err := p.completion.finalPayload()
+			if err != nil {
+				if !outputLimited {
+					return outputvalidation.New(
+						model.OutputValidationStructuredOutput,
+						fmt.Errorf(
+							"anthropic stream: finalize structured output %q: %w",
+							p.completion.name,
+							err,
+						),
+					)
+				}
+			} else {
+				p.completionSeen = true
+				if err := p.emit(model.CompletionChunk{
+					Completion: model.Completion{
+						Name:    p.completion.name,
+						Payload: payload,
+					},
+				}); err != nil {
+					return err
+				}
+			}
+			p.completion = nil
+		}
 		if p.output != nil && !p.completionSeen {
-			return outputvalidation.New(
-				model.OutputValidationStructuredOutput,
-				fmt.Errorf(
-					"anthropic stream: structured output %q did not produce a text block",
-					p.output.Name,
-				),
-			)
+			if !outputLimited {
+				return outputvalidation.New(
+					model.OutputValidationStructuredOutput,
+					fmt.Errorf(
+						"anthropic stream: structured output %q did not produce a text block",
+						p.output.Name,
+					),
+				)
+			}
 		}
 		chunk := model.StopChunk{
 			Reason:        p.stopReason,
-			OutputLimited: anthropicOutputLimited(p.stopReason),
+			OutputLimited: outputLimited,
 		}
 		p.complete = true
 		return p.emit(chunk)

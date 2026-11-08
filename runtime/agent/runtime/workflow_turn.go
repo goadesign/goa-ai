@@ -84,18 +84,36 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
 	outcomes, timedOut, executionErr := l.executeImmediateToolCalls(program.immediate, result.ExpectedChildren, nil)
 	records, resultErr := stepToolRecordsAfterExecution(program.immediate, outcomes, executionErr)
-	l.finishToolBatches(records)
-	batch.records = append(batch.records, records...)
+	refusedRecords := make([]stepToolRecord, 0, len(program.refusals))
+	for _, refusal := range program.refusals {
+		refusedRecords = append(refusedRecords, stepToolRecord{
+			call:             refusal.call,
+			scheduleRequired: true,
+			scheduleExact:    true,
+			result: &planner.ToolResult{
+				Name:       refusal.call.Name,
+				ToolCallID: refusal.call.ToolCallID,
+				Failure:    planner.CloneToolFailure(refusal.failure),
+			},
+		})
+	}
+	allRecords := append(records, refusedRecords...)
+	l.finishToolBatches(allRecords)
+	orderedRecords, err := canonicalStepToolRecords(allowed, allRecords)
+	if err != nil {
+		return nil, nil, err
+	}
+	batch.records = append(batch.records, orderedRecords...)
 	batch.timedOut = batch.timedOut || timedOut
 	if err := errors.Join(executionErr, resultErr); err != nil {
 		return nil, nil, err
 	}
-	if err := l.r.validateTerminalToolClarifications(records); err != nil {
+	if err := l.r.validateTerminalToolClarifications(orderedRecords); err != nil {
 		return nil, nil, err
 	}
 
-	toolClarifications := toolClarificationsFromRecords(records)
-	pending, err := pendingInputsFromToolRecords(records)
+	toolClarifications := toolClarificationsFromRecords(orderedRecords)
+	pending, err := pendingInputsFromToolRecords(orderedRecords)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -265,7 +283,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 			return errors.New("workflow step terminal payload cannot accompany await work")
 		}
 	}
-	immediate, confirmations, err := l.r.splitConfirmationCalls(ctx, l.base, allowed, allowedSpecs)
+	immediate, confirmations, refusals, err := l.r.splitConfirmationCalls(ctx, l.base, allowed, allowedSpecs)
 	if err != nil {
 		return err
 	}
@@ -298,6 +316,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	l.st.Caps = nextCaps
 	program.immediate = immediate
 	program.confirmations = confirmations
+	program.refusals = refusals
 	return nil
 }
 
@@ -503,7 +522,13 @@ func (r *Runtime) recordStepToolResults(
 			record.resultPublished = true
 		}
 		if record.resultRunID == "" {
-			record.resultRunID = record.resultRecord.RunID
+			if record.resultRecord != nil {
+				record.resultRunID = record.resultRecord.RunID
+			} else if record.call.RunID != "" {
+				record.resultRunID = record.call.RunID
+			} else {
+				record.resultRunID = base.RunContext.RunID
+			}
 		}
 	}
 	results := stepToolResults(records)

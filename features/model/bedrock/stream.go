@@ -636,9 +636,6 @@ func (p *chunkProcessor) Handle(event any) error {
 			)
 		}
 		delete(p.openBlocks, idx)
-		if err := p.finalizeCompletion(idx); err != nil {
-			return err
-		}
 		// Finalize any reasoning block accumulated for this index.
 		if rb := p.reasoningBlocks[idx]; rb != nil {
 			delete(p.reasoningBlocks, idx)
@@ -732,6 +729,14 @@ func (p *chunkProcessor) Handle(event any) error {
 		p.canonical.StopReason = string(ev.Value.StopReason)
 		p.canonical.OutputLimited = bedrockOutputLimited(ev.Value.StopReason)
 		p.complete = true
+		if p.completion != nil {
+			if err := p.finalizeCompletion(p.completion.index); err != nil {
+				if !p.canonical.OutputLimited {
+					return err
+				}
+				p.completion = nil
+			}
+		}
 		return nil
 	case *brtypes.ConverseStreamOutputMemberMetadata:
 		if !p.started || !p.complete || p.terminalEmitted {

@@ -157,6 +157,18 @@ type (
 		Failure *planner.ToolFailure `json:"failure"`
 	}
 
+	// DeclaredErrorSpec describes one error declared in the Goa design for a method.
+	DeclaredErrorSpec struct {
+		// Name is the Goa error name (e.g. "invalid_state").
+		Name string
+		// Temporary indicates the error was marked with Temporary() in the design.
+		Temporary bool
+		// Fault indicates the error was marked with Fault() in the design.
+		Fault bool
+		// Timeout indicates the error was marked with Timeout() in the design.
+		Timeout bool
+	}
+
 	// ToolRetry is a non-terminal registry orchestration instruction. It never
 	// carries planner failure semantics.
 	ToolRetry struct {
@@ -391,6 +403,7 @@ func NewToolResultServiceErrorMessage(
 	tool tools.Ident,
 	code string,
 	err error,
+	declared ...DeclaredErrorSpec,
 ) ToolResultMessage {
 	out := NewToolResultErrorMessage(registrationToken, toolUseID, code, err.Error())
 	issues := ValidationIssues(err)
@@ -404,8 +417,69 @@ func NewToolResultServiceErrorMessage(
 	} else if len(issues) > 0 {
 		out.Error.Failure = defaultToolFailure("invalid_arguments", err.Error())
 		out.Error.Failure.Recovery.Issues = tools.CloneFieldIssues(issues)
+	} else if isDefaultFallthrough(code, out.Error.Failure) {
+		if eligible := EligibleDeclaredToolFailure(err, declared); eligible != nil {
+			out.Error.Failure = eligible
+		}
 	}
 	return out
+}
+
+// EligibleDeclaredToolFailure inspects err against declared method error specs.
+// If err represents an eligible declared error, it returns a ToolFailure with
+// RecoveryReplan and either FailureDomainRejection or FailureUnavailable.
+// Otherwise it returns nil.
+func EligibleDeclaredToolFailure(err error, declared []DeclaredErrorSpec) *planner.ToolFailure {
+	if err == nil || len(declared) == 0 {
+		return nil
+	}
+	if len(ValidationIssues(err)) > 0 {
+		return nil
+	}
+
+	current := err
+	for current != nil {
+		if multi, ok := current.(interface{ Unwrap() []error }); ok && multi != nil {
+			return nil
+		}
+
+		if namer, ok := current.(goa.GoaErrorNamer); ok {
+			name := namer.GoaErrorName()
+			spec, found := findDeclaredErrorSpec(declared, name)
+			if !found {
+				return nil
+			}
+			if spec.Fault || spec.Timeout {
+				return nil
+			}
+
+			if se, ok := current.(*goa.ServiceError); ok && se != nil {
+				if se.Fault || se.Timeout || len(se.History()) > 1 {
+					return nil
+				}
+			}
+
+			kind := planner.FailureDomainRejection
+			if spec.Temporary {
+				kind = planner.FailureUnavailable
+			}
+			return &planner.ToolFailure{
+				Kind:  kind,
+				Error: planner.ToolErrorFromError(err),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryReplan,
+				},
+			}
+		}
+
+		u, ok := current.(interface{ Unwrap() error })
+		if !ok || u == nil {
+			break
+		}
+		current = u.Unwrap()
+	}
+
+	return nil
 }
 
 // NewToolResultInvalidArgumentsMessage constructs a correct-call failure with
@@ -602,4 +676,26 @@ func isGoaValidationConstraint(name string) bool {
 	default:
 		return false
 	}
+}
+
+// findDeclaredErrorSpec returns the declared error specification matching name.
+func findDeclaredErrorSpec(specs []DeclaredErrorSpec, name string) (DeclaredErrorSpec, bool) {
+	for _, spec := range specs {
+		if spec.Name == name {
+			return spec, true
+		}
+	}
+	return DeclaredErrorSpec{}, false
+}
+
+// isDefaultFallthrough reports whether failure is the unspecialized internal finish
+// fallthrough produced by defaultToolFailure.
+func isDefaultFallthrough(code string, failure *planner.ToolFailure) bool {
+	if failure == nil {
+		return false
+	}
+	if code == ToolErrorCodeOutcomeUnknown {
+		return false
+	}
+	return failure.Kind == planner.FailureInternal && failure.Recovery.Action == planner.RecoveryFinish
 }
