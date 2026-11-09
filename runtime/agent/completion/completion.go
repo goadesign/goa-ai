@@ -259,13 +259,6 @@ func prepareRequest[T any](req *model.Request, spec Spec[T], stream bool) (*mode
 		return nil, err
 	}
 	cloned := *req
-	if cloned.Thinking == nil {
-		// Typed completions expect one JSON response. Provider thinking can use
-		// the output budget and split that response into parts the decoder
-		// rejects. Unless the caller chose otherwise, ask the provider to turn
-		// thinking off. Models that cannot disable it may ignore this setting.
-		cloned.Thinking = &model.ThinkingOptions{Enable: false}
-	}
 	cloned.Stream = stream
 	cloned.StructuredOutput = structuredOutput
 	return &cloned, nil

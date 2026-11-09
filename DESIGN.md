@@ -336,7 +336,7 @@ Service("documents", func() {
 When a service needs a single, schema-constrained structured output from a model without any tool calls or workflow persistence (for example, generating a concise session title or parsing a natural-language filter into a struct), it declares a `Completion(name, description, func() { Return(ResultType) })` in the DSL (`dsl/completion.go`):
 
 - `codegen/agent` emits `gen/<svc>/completions/` with a canonical JSON Schema and typed `JSONCodec` for `ResultType`.
-- At runtime, `CompleteStructured` / `StreamCompleteStructured` invokes the model with constrained decoding (`StructuredOutput` schema enforcement) and validates the response through the generated codec before returning the Go struct to the caller.
+- At runtime, `completion.Complete` / `completion.Stream` invokes the model with constrained decoding (`StructuredOutput` schema enforcement) and validates the response through the generated codec before returning the Go struct to the caller. These helpers preserve the caller's thinking choice: absent `Request.Thinking` leaves provider defaults unchanged, while an explicit choice passes through to the provider.
 - Completion names must be 1–64 ASCII characters matching `^[A-Za-z0-9_-]+$` so they satisfy every model provider's structured-output schema name rules.
 
 ### Composable Prompt Management and Template Registry

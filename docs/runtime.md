@@ -231,6 +231,14 @@ On success, `completion.Response.ModelResponse` contains the exact model
 response and its token usage. On failure, the response is nil, matching the
 `model.Client` contract.
 
+Typed completion helpers preserve `Request.Thinking`. When it is absent, the
+provider chooses its default reasoning behavior. To disable thinking, explicitly
+set `Thinking: &model.ThinkingOptions{Enable: false}` and configure any required
+provider-specific disabled-thinking setting. For example, OpenAI clients send
+`reasoning.effort:"none"` only when `Options.DisabledThinkingEffort` is `"none"`.
+Helpers previously supplied this explicit disabled choice when thinking was
+absent. Callers that relied on that behavior must now supply it themselves.
+
 ### Forced typed tool output
 
 Use `runtime/agent/tooloutput.Run[T]` when the requested model must return one
