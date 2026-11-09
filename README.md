@@ -172,7 +172,9 @@ service wiring, and connecting a model. For MCP, follow the
 
 - **Typed tools and structured answers.** Bind tools to Goa methods or custom
   executors; declare `Completion(...)` for typed direct responses. Generated
-  codecs and schemas enforce the authored contract.
+  codecs and schemas enforce the authored contract. Completion helpers preserve
+  the caller's thinking settings; see the [runtime guide](docs/runtime.md#typed-direct-completions)
+  for provider defaults and explicit disabled thinking.
 - **Composable prompts and scoped overrides.** Declare agent system instructions
   and shared prompt templates in Goa design. Templates compile with `missingkey=error`
   and validate field references against typed `Args` at generation time. Compose
