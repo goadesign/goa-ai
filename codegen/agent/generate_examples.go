@@ -500,7 +500,8 @@ import (
 // after the header starts at its "---" separator. A Goa plugin that wraps
 // this generator may replace a section by name to change only that part of
 // the guide, so renaming, removing or reordering an entry changes a
-// plugin-visible contract.
+// plugin-visible contract. Headings carry their numbers, so a plugin that
+// empties a section leaves a gap in the numbering.
 var quickstartSections = []string{
 	"header",       // title and notes about this file
 	"design",       // services and agents declared in the design

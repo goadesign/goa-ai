@@ -13,10 +13,11 @@ design tree and is processed during `goa gen`.
 completion packages (`gen/<service>/completions`), tool codecs/specs, activity handlers, and
 registration helpers. A contextual `AGENTS_QUICKSTART.md` is written at the module root unless
 disabled via `DisableAgentDocs()`. A Goa plugin registered to run after Goa-AI can replace one
-part of that guide by its section name, in render order: `agents-quickstart-header`, `-design`,
-`-liftoff`, `-agents`, `-planner`, `-tools`, `-toolbox`, `-exports`, `-evaluations`,
-`-advanced`, `-golden-rules`, and `-faq` (each after the header begins with its `---`
-separator).
+part of that guide: `File.Section("agents-quickstart-<name>")` returns that part's section, whose
+`Source` the plugin replaces. In render order, `<name>` is one of `header`, `design`, `liftoff`,
+`agents`, `planner`, `tools`, `toolbox`, `exports`, `evaluations`, `advanced`, `golden-rules`, and
+`faq`. Every section after the header begins with its `---` separator, and the headings carry
+their numbers (`## 2.` through `## 11.`), so replace a section rather than emptying it.
 
 The DSL is evaluated by Goa's `eval` engine, so the same rules apply as with the standard
 service/transport DSL: expressions must be invoked in the proper context, and attribute definitions

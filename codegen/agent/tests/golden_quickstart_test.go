@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -54,11 +55,12 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 // TestQuickstart_NamedSections pins the section names a Goa plugin uses to
 // replace one part of AGENTS_QUICKSTART.md, their order, and that each
 // section after the header starts at its separator, so a replaced section
-// keeps the guide's layout.
+// keeps the guide's layout. Each numbered heading belongs to exactly one
+// section, so replacing a section replaces that whole part of the guide.
 func TestQuickstart_NamedSections(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ToolSpecsMinimal())
 	var names []string
-	var content strings.Builder
+	headings := make(map[string]string)
 	for _, f := range files {
 		if f.Path != "AGENTS_QUICKSTART.md" {
 			continue
@@ -68,7 +70,15 @@ func TestQuickstart_NamedSections(t *testing.T) {
 			if i > 0 {
 				assert.True(t, strings.HasPrefix(s.Source, "---\n"), "section %s starts at its separator", s.Name)
 			}
-			require.NoError(t, s.Write(&content))
+			var b strings.Builder
+			require.NoError(t, s.Write(&b))
+			for _, line := range strings.Split(b.String(), "\n") {
+				if strings.HasPrefix(line, "## ") {
+					_, dup := headings[line]
+					assert.False(t, dup, "heading %q appears once", line)
+					headings[line] = s.Name
+				}
+			}
 		}
 	}
 	assert.Equal(t, []string{
@@ -85,7 +95,15 @@ func TestQuickstart_NamedSections(t *testing.T) {
 		"agents-quickstart-golden-rules",
 		"agents-quickstart-faq",
 	}, names)
-	assert.Equal(t, fileContent(t, files, "AGENTS_QUICKSTART.md"), content.String())
+	for n := 1; n <= 11; n++ {
+		var owner string
+		for line, section := range headings {
+			if strings.HasPrefix(line, fmt.Sprintf("## %d. ", n)) {
+				owner = section
+			}
+		}
+		assert.Equal(t, names[n], owner, "heading ## %d. belongs to section %s", n, names[n])
+	}
 }
 
 func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
