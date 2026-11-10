@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	. "goa.design/goa-ai/dsl"
@@ -48,6 +49,43 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "## 8. 🧪 Evaluating Your Agents")
 	require.Contains(t, content, "doesn't declare any evaluation suites yet")
 	require.NotContains(t, content, "### Suite `")
+}
+
+// TestQuickstart_NamedSections pins the section names a Goa plugin uses to
+// replace one part of AGENTS_QUICKSTART.md, their order, and that each
+// section after the header starts at its separator, so a replaced section
+// keeps the guide's layout.
+func TestQuickstart_NamedSections(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ToolSpecsMinimal())
+	var names []string
+	var content strings.Builder
+	for _, f := range files {
+		if f.Path != "AGENTS_QUICKSTART.md" {
+			continue
+		}
+		for i, s := range f.SectionTemplates {
+			names = append(names, s.Name)
+			if i > 0 {
+				assert.True(t, strings.HasPrefix(s.Source, "---\n"), "section %s starts at its separator", s.Name)
+			}
+			require.NoError(t, s.Write(&content))
+		}
+	}
+	assert.Equal(t, []string{
+		"agents-quickstart-header",
+		"agents-quickstart-design",
+		"agents-quickstart-liftoff",
+		"agents-quickstart-agents",
+		"agents-quickstart-planner",
+		"agents-quickstart-tools",
+		"agents-quickstart-toolbox",
+		"agents-quickstart-exports",
+		"agents-quickstart-evaluations",
+		"agents-quickstart-advanced",
+		"agents-quickstart-golden-rules",
+		"agents-quickstart-faq",
+	}, names)
+	assert.Equal(t, fileContent(t, files, "AGENTS_QUICKSTART.md"), content.String())
 }
 
 func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {

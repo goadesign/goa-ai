@@ -493,6 +493,29 @@ import (
 	}
 }
 
+// quickstartSections lists the sections of AGENTS_QUICKSTART.md in render
+// order. quickstartReadmeFile names each section "agents-quickstart-<name>",
+// and Goa writes the sections back to back, so the guide is the
+// concatenation of the agents_quickstart_<name> templates. Every section
+// after the header starts at its "---" separator. A Goa plugin that wraps
+// this generator may replace a section by name to change only that part of
+// the guide, so renaming, removing or reordering an entry changes a
+// plugin-visible contract.
+var quickstartSections = []string{
+	"header",       // title and notes about this file
+	"design",       // services and agents declared in the design
+	"liftoff",      // generating and running the first example
+	"agents",       // each agent and its minimal configuration
+	"planner",      // implementing a planner
+	"tools",        // service-backed, provider and MCP tools
+	"toolbox",      // per-agent toolset reference
+	"exports",      // agents calling agents
+	"evaluations",  // declared evaluation suites and how to run them
+	"advanced",     // production features
+	"golden-rules", // working with generated code
+	"faq",          // common questions
+}
+
 // quickstartReadmeFile builds the contextual quickstart README at the module
 // root. The file is named AGENTS_QUICKSTART.md and is generated unless disabled
 // via DSL. It documents the design's agents plus any declared evaluation
@@ -502,13 +525,14 @@ func quickstartReadmeFile(data *GeneratorData, roots []eval.Root) *codegen.File 
 	if docData == nil {
 		return nil
 	}
-	sections := []*codegen.SectionTemplate{
-		{
-			Name:    "agents-quickstart",
-			Source:  agentsTemplates.Read(quickstartReadmeT),
+	sections := make([]*codegen.SectionTemplate, 0, len(quickstartSections))
+	for _, name := range quickstartSections {
+		sections = append(sections, &codegen.SectionTemplate{
+			Name:    "agents-quickstart-" + name,
+			Source:  agentsTemplates.Read("agents_quickstart_" + strings.ReplaceAll(name, "-", "_")),
 			Data:    docData,
 			FuncMap: templateFuncMap(),
-		},
+		})
 	}
 	return &codegen.File{Path: "AGENTS_QUICKSTART.md", SectionTemplates: sections}
 }

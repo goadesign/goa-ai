@@ -17,7 +17,6 @@ const (
 	exampleExecutorStubT       = "example_executor_stub"
 	configFileT                = "config"
 	plannerInternalStubT       = "planner_internal_stub"
-	quickstartReadmeT          = "agents_quickstart"
 	registryFileT              = "registry"
 	registryClientFileT        = "registry_client"
 	registryClientOptionsFileT = "registry_client_options"
