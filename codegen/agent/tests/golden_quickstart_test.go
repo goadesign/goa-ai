@@ -81,7 +81,7 @@ func TestQuickstart_NamedSections(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, []string{
+	require.Equal(t, []string{
 		"agents-quickstart-header",
 		"agents-quickstart-design",
 		"agents-quickstart-liftoff",

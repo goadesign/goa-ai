@@ -166,6 +166,32 @@ type (
 	}
 )
 
+// quickstartSections lists the sections of AGENTS_QUICKSTART.md in render
+// order. quickstartReadmeFile names each section "agents-quickstart-<name>",
+// and Goa writes the sections back to back, so the guide is the
+// concatenation of the agents_quickstart_<name> templates. Every section
+// after the header starts at its "---" separator, so each template file
+// before the last ends with the blank line that precedes the next separator;
+// keep it, or the guide's bytes change. A Goa plugin that wraps
+// this generator may replace a section by name to change only that part of
+// the guide, so renaming, removing or reordering an entry changes a
+// plugin-visible contract. Headings carry their numbers, so a plugin that
+// empties a section leaves a gap in the numbering.
+var quickstartSections = []string{
+	"header",       // title and notes about this file
+	"design",       // services and agents declared in the design
+	"liftoff",      // generating and running the first example
+	"agents",       // each agent and its minimal configuration
+	"planner",      // implementing a planner
+	"tools",        // service-backed, provider and MCP tools
+	"toolbox",      // per-agent toolset reference
+	"exports",      // agents calling agents
+	"evaluations",  // declared evaluation suites and how to run them
+	"advanced",     // production features
+	"golden-rules", // working with generated code
+	"faq",          // common questions
+}
+
 // generateExampleFiles adds startup code and starter implementations for each
 // generated agent.
 func generateExampleFiles(data *GeneratorData, bootstraps *exampleBootstrapPackagesPlan, mains *exampleMainPackagesPlan, apiVersion string, files []*codegen.File) ([]*codegen.File, error) {
@@ -491,30 +517,6 @@ import (
 			"Imports": imports,
 		},
 	}
-}
-
-// quickstartSections lists the sections of AGENTS_QUICKSTART.md in render
-// order. quickstartReadmeFile names each section "agents-quickstart-<name>",
-// and Goa writes the sections back to back, so the guide is the
-// concatenation of the agents_quickstart_<name> templates. Every section
-// after the header starts at its "---" separator. A Goa plugin that wraps
-// this generator may replace a section by name to change only that part of
-// the guide, so renaming, removing or reordering an entry changes a
-// plugin-visible contract. Headings carry their numbers, so a plugin that
-// empties a section leaves a gap in the numbering.
-var quickstartSections = []string{
-	"header",       // title and notes about this file
-	"design",       // services and agents declared in the design
-	"liftoff",      // generating and running the first example
-	"agents",       // each agent and its minimal configuration
-	"planner",      // implementing a planner
-	"tools",        // service-backed, provider and MCP tools
-	"toolbox",      // per-agent toolset reference
-	"exports",      // agents calling agents
-	"evaluations",  // declared evaluation suites and how to run them
-	"advanced",     // production features
-	"golden-rules", // working with generated code
-	"faq",          // common questions
 }
 
 // quickstartReadmeFile builds the contextual quickstart README at the module

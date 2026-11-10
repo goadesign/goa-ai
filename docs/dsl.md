@@ -17,7 +17,7 @@ part of that guide: `File.Section("agents-quickstart-<name>")` returns that part
 `Source` the plugin replaces. In render order, `<name>` is one of `header`, `design`, `liftoff`,
 `agents`, `planner`, `tools`, `toolbox`, `exports`, `evaluations`, `advanced`, `golden-rules`, and
 `faq`. Every section after the header begins with its `---` separator, and the headings carry
-their numbers (`## 2.` through `## 11.`), so replace a section rather than emptying it.
+their numbers (`## 1.` through `## 11.`), so replace a section rather than emptying it.
 
 The DSL is evaluated by Goa's `eval` engine, so the same rules apply as with the standard
 service/transport DSL: expressions must be invoked in the proper context, and attribute definitions
