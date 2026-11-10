@@ -67,7 +67,10 @@ func TestQuickstart_NamedSections(t *testing.T) {
 		}
 		for i, s := range f.SectionTemplates {
 			names = append(names, s.Name)
-			if i > 0 {
+			switch {
+			case s.Name == "agents-quickstart-liftoff-guide":
+				assert.True(t, strings.HasPrefix(s.Source, "### "), "section %s starts at its subheading", s.Name)
+			case i > 0:
 				assert.True(t, strings.HasPrefix(s.Source, "---\n"), "section %s starts at its separator", s.Name)
 			}
 			var b strings.Builder
@@ -85,6 +88,7 @@ func TestQuickstart_NamedSections(t *testing.T) {
 		"agents-quickstart-header",
 		"agents-quickstart-design",
 		"agents-quickstart-liftoff",
+		"agents-quickstart-liftoff-guide",
 		"agents-quickstart-agents",
 		"agents-quickstart-planner",
 		"agents-quickstart-tools",
@@ -95,14 +99,15 @@ func TestQuickstart_NamedSections(t *testing.T) {
 		"agents-quickstart-golden-rules",
 		"agents-quickstart-faq",
 	}, names)
-	for n := 1; n <= 11; n++ {
+	owners := []string{"design", "liftoff", "agents", "planner", "tools", "toolbox", "exports", "evaluations", "advanced", "golden-rules", "faq"}
+	for i, want := range owners {
 		var owner string
 		for line, section := range headings {
-			if strings.HasPrefix(line, fmt.Sprintf("## %d. ", n)) {
+			if strings.HasPrefix(line, fmt.Sprintf("## %d. ", i+1)) {
 				owner = section
 			}
 		}
-		assert.Equal(t, names[n], owner, "heading ## %d. belongs to section %s", n, names[n])
+		assert.Equal(t, "agents-quickstart-"+want, owner, "heading ## %d. belongs to section %s", i+1, want)
 	}
 }
 
