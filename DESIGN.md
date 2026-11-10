@@ -638,6 +638,7 @@ var _ = Service("assistant", func() {
   - `internal/agents/<service>/bootstrap/bootstrap.go`: Runtime construction and agent/toolset registration wiring.
   - `internal/agents/<agent>/planner/planner.go`: Starter `planner.Planner` implementation (`PlanStart` / `PlanResume`).
   - `internal/agents/<agent>/toolsets/<toolset>/execute.go`: Starter local toolset executor bound to the service's methods.
+- `goa gen` also writes `AGENTS_QUICKSTART.md` at the module root (unless the `API` declares `DisableAgentDocs()`), a guide to this design's agents, tools and evaluation suites for coding agents. The agent plugin renders it from named sections, one per top-level part, so a Goa plugin that runs after it can replace one part without copying the rest; [`docs/dsl.md`](docs/dsl.md) lists the section names.
 
 ---
 

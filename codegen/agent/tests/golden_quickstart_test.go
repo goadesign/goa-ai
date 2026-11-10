@@ -1,9 +1,11 @@
 package tests
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	. "goa.design/goa-ai/dsl"
@@ -48,6 +50,65 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "## 8. 🧪 Evaluating Your Agents")
 	require.Contains(t, content, "doesn't declare any evaluation suites yet")
 	require.NotContains(t, content, "### Suite `")
+}
+
+// TestQuickstart_NamedSections pins the section names a Goa plugin uses to
+// replace one part of AGENTS_QUICKSTART.md, their order, and that each
+// section after the header starts at its separator, so a replaced section
+// keeps the guide's layout. Each numbered heading belongs to exactly one
+// section, so replacing a section replaces that whole part of the guide.
+func TestQuickstart_NamedSections(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ToolSpecsMinimal())
+	var names []string
+	headings := make(map[string]string)
+	for _, f := range files {
+		if f.Path != "AGENTS_QUICKSTART.md" {
+			continue
+		}
+		for i, s := range f.SectionTemplates {
+			names = append(names, s.Name)
+			switch {
+			case s.Name == "agents-quickstart-liftoff-guide":
+				assert.True(t, strings.HasPrefix(s.Source, "### "), "section %s starts at its subheading", s.Name)
+			case i > 0:
+				assert.True(t, strings.HasPrefix(s.Source, "---\n"), "section %s starts at its separator", s.Name)
+			}
+			var b strings.Builder
+			require.NoError(t, s.Write(&b))
+			for _, line := range strings.Split(b.String(), "\n") {
+				if strings.HasPrefix(line, "## ") {
+					_, dup := headings[line]
+					assert.False(t, dup, "heading %q appears once", line)
+					headings[line] = s.Name
+				}
+			}
+		}
+	}
+	require.Equal(t, []string{
+		"agents-quickstart-header",
+		"agents-quickstart-design",
+		"agents-quickstart-liftoff",
+		"agents-quickstart-liftoff-guide",
+		"agents-quickstart-agents",
+		"agents-quickstart-planner",
+		"agents-quickstart-tools",
+		"agents-quickstart-toolbox",
+		"agents-quickstart-exports",
+		"agents-quickstart-evaluations",
+		"agents-quickstart-advanced",
+		"agents-quickstart-golden-rules",
+		"agents-quickstart-faq",
+	}, names)
+	owners := []string{"design", "liftoff", "agents", "planner", "tools", "toolbox", "exports", "evaluations", "advanced", "golden-rules", "faq"}
+	for i, want := range owners {
+		var owner string
+		for line, section := range headings {
+			if strings.HasPrefix(line, fmt.Sprintf("## %d. ", i+1)) {
+				owner = section
+			}
+		}
+		assert.Equal(t, "agents-quickstart-"+want, owner, "heading ## %d. belongs to section %s", i+1, want)
+	}
 }
 
 func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
