@@ -207,11 +207,11 @@ service wiring, and connecting a model. For MCP, follow the
 
 ### MCP clients and servers
 
-- **MCP 2026-07-28 over HTTP.** Generate stateless servers and typed clients with
-  discovery, tools, structured results, and ordered text, image, audio, resource
-  links, and embedded resources. Consumers also support stdio; generated stdio
-  servers are deferred. Generated HTTP servers also accept basic `2025-11-25`
-  clients on the same URL, using the same configured Goa endpoints. See the
+- **MCP 2026-07-28 over HTTP and stdio.** Generate stateless HTTP and stdio
+  servers (`Mount` and `ServeStdio`) and typed clients with discovery, tools,
+  structured results, and ordered text, image, audio, resource links, and embedded
+  resources. Generated HTTP and stdio servers also accept basic `2025-11-25`
+  clients using the same configured Goa endpoints. See the
   [older-client contract](docs/runtime.md#older-http-clients).
 - **Runtime-defined tools.** Declare `DynamicTools()` to implement tool listing
   and invocation through generated protocol types without authored static tools.

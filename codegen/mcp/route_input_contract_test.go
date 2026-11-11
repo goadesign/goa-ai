@@ -164,6 +164,7 @@ var _=Service("scoped",func(){
 
 const mappedRouteRuntimeTest = `package routeinputs_test
 import (
+ "bufio"
  "bytes"
  "context"
  "encoding/json"
@@ -172,6 +173,7 @@ import (
  "net/http"
  "net/http/httptest"
  "net/url"
+ "os"
  "strings"
  "sync/atomic"
  "testing"
@@ -277,5 +279,81 @@ func TestMappedValuesReachEveryEndpoint(t *testing.T){
  assert.Equal(t,"\"blue/native\"",string(result.StructuredContent))
  // A native caller's URL supplies scope; the protocol body retains only intent.
  assert.True(t,strings.HasSuffix(doer.path,"/blue/rpc"))
+
+ stdioEndpoints:=genmcp.NewEndpoints(adapter)
+ callStdio:=func(pathValue,method,params string) map[string]json.RawMessage {
+  t.Helper()
+  serverIn,clientOut,pipeErr:=os.Pipe();require.NoError(t,pipeErr)
+  clientIn,serverOut,pipeErr:=os.Pipe();require.NoError(t,pipeErr)
+  done:=make(chan error,1)
+  go func(){done<-genserver.ServeStdio(t.Context(),serverIn,serverOut,stdioEndpoints,pathValue)}()
+  _,writeErr:=clientOut.WriteString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\""+method+"\",\"params\":"+params+"}\n")
+  require.NoError(t,writeErr)
+  reader:=bufio.NewReader(clientIn)
+  line,readErr:=reader.ReadBytes('\n');require.NoError(t,readErr)
+  require.NoError(t,clientOut.Close())
+  require.NoError(t,clientIn.Close())
+  require.NoError(t,<-done)
+  var envelope map[string]json.RawMessage
+  require.NoError(t,json.Unmarshal(line,&envelope))
+  return envelope
+ }
+ meta:="\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}"
+ stdioCatalog:=callStdio("blue","tools/list","{"+meta+"}")
+ assert.NotContains(t,string(stdioCatalog["result"]),"organization_id")
+ assert.NotContains(t,string(stdioCatalog["result"]),"httpPath")
+ for _,tc:=range []struct{name,path,arguments,want string}{
+  {"text","blue","{\"name\":\"domain\"}","blue/domain"},
+  {"free","blue","{}","free"},
+  {"number","42","{}","42"},
+  {"list","1,2","{}","[1 2]"},
+  {"optional","blue","{}","blue"},
+ }{
+  before:=calls.Load()
+  envelope:=callStdio(tc.path,"tools/call","{\"name\":\""+tc.name+"\",\"arguments\":"+tc.arguments+","+meta+"}")
+  var res struct{StructuredContent json.RawMessage ` + "`json:\"structuredContent\"`" + `;IsError *bool ` + "`json:\"isError\"`" + `}
+  require.NoError(t,json.Unmarshal(envelope["result"],&res))
+  require.Nil(t,res.IsError,string(envelope["result"]))
+  assert.Equal(t,"\""+tc.want+"\"",string(res.StructuredContent))
+  assert.Equal(t,before+1,calls.Load())
+ }
+ for _,tc:=range []struct{name,path,arguments string}{
+  {"text","BAD","{\"name\":\"domain\"}"},
+  {"number","wrong","{}"},
+  {"number","0","{}"},
+  {"list","1,wrong","{}"},
+  {"text","blue","{\"name\":\"domain\",\"organization_id\":\"injected\"}"},
+ }{
+  before:=calls.Load()
+  envelope:=callStdio(tc.path,"tools/call","{\"name\":\""+tc.name+"\",\"arguments\":"+tc.arguments+","+meta+"}")
+  var res struct{IsError *bool ` + "`json:\"isError\"`" + `}
+  require.NoError(t,json.Unmarshal(envelope["result"],&res))
+  require.NotNil(t,res.IsError)
+  assert.True(t,*res.IsError)
+  assert.Equal(t,before,calls.Load())
+ }
+ stdioResource:=callStdio("blue","resources/read","{\"uri\":\"test://fixed\","+meta+"}")
+ assert.Contains(t,string(stdioResource["result"]),"\"text\":\"blue\"")
+ stdioPrompts:=callStdio("blue","prompts/list","{"+meta+"}")
+ assert.Contains(t,string(stdioPrompts["result"]),"\"name\":\"topic\"")
+ assert.NotContains(t,string(stdioPrompts["result"]),"organization_id")
+ stdioPrompt:=callStdio("blue","prompts/get","{\"name\":\"prompt\",\"arguments\":{\"topic\":\"subject\"},"+meta+"}")
+ assert.Contains(t,string(stdioPrompt["result"]),"\"resultType\":\"complete\"")
+ stdioCompletion:=callStdio("blue","completion/complete","{\"ref\":{\"type\":\"ref/prompt\",\"name\":\"prompt\"},\"argument\":{\"name\":\"topic\",\"value\":\"part\"},"+meta+"}")
+ assert.Contains(t,string(stdioCompletion["result"]),"\"blue/part\"")
+ serverIn,clientOut,err:=os.Pipe();require.NoError(t,err)
+ clientIn,serverOut,err:=os.Pipe();require.NoError(t,err)
+ subDone:=make(chan error,1)
+ go func(){subDone<-genserver.ServeStdio(t.Context(),serverIn,serverOut,stdioEndpoints,"blue")}()
+ _,err=clientOut.WriteString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"subscriptions/listen\",\"params\":{\"notifications\":{\"resourceSubscriptions\":[\"test://fixed\"]},"+meta+"}}\n")
+ require.NoError(t,err)
+ subReader:=bufio.NewReader(clientIn)
+ ackLine,err:=subReader.ReadBytes('\n');require.NoError(t,err)
+ assert.Contains(t,string(ackLine),"notifications/subscriptions/acknowledged")
+ finalLine,err:=subReader.ReadBytes('\n');require.NoError(t,err)
+ assert.Contains(t,string(finalLine),"\"resultType\":\"complete\"")
+ require.NoError(t,clientOut.Close())
+ require.NoError(t,clientIn.Close())
+ require.NoError(t,<-subDone)
 }
 `

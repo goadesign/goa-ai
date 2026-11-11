@@ -106,14 +106,24 @@ func TestLegacyHTTPRequestIDsAndNotifications(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, id, string(encoded))
 	}
-	body := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
-	request := httptest.NewRequestWithContext(t.Context(), "POST", "https://resource.example/mcp", strings.NewReader(body))
-	request.Header.Set("MCP-Protocol-Version", LegacyProtocolVersion)
-	decoded, failure := DecodeLegacyHTTPRequest(request, []byte(body))
+	for _, method := range []string{"notifications/initialized", "notifications/example"} {
+		body := `{"jsonrpc":"2.0","method":"` + method + `"}`
+		request := httptest.NewRequestWithContext(t.Context(), "POST", "https://resource.example/mcp", strings.NewReader(body))
+		request.Header.Set("MCP-Protocol-Version", LegacyProtocolVersion)
+		decoded, failure := DecodeLegacyHTTPRequest(request, []byte(body))
+		require.Nil(t, failure)
+		assert.False(t, decoded.HasID)
+		assert.Equal(t, method, decoded.Method)
+		request.Header.Add("MCP-Protocol-Version", LegacyProtocolVersion)
+		_, failure = DecodeLegacyHTTPRequest(request, []byte(body))
+		require.NotNil(t, failure)
+		assert.Equal(t, JSONRPCInvalidRequest, failure.Code)
+	}
+	decoded, failure := decodeLegacyStdioRequest([]byte(`{"jsonrpc":"2.0","method":"notifications/example","params":{"extra":true}}`))
 	require.Nil(t, failure)
 	assert.False(t, decoded.HasID)
-	request.Header.Add("MCP-Protocol-Version", LegacyProtocolVersion)
-	_, failure = DecodeLegacyHTTPRequest(request, []byte(body))
+	assert.Equal(t, "notifications/example", decoded.Method)
+	_, failure = decodeLegacyStdioRequest([]byte(`{"jsonrpc":"2.0","method":"notifications/example","params":"invalid"}`))
 	require.NotNil(t, failure)
 	assert.Equal(t, JSONRPCInvalidRequest, failure.Code)
 }

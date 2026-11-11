@@ -17,85 +17,16 @@ import (
 // ValidateHTTPRequest checks one request's release-owned metadata and mirrored
 // headers. Generated servers supply the static header bindings for their tools.
 func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string][]HeaderBinding) *Error {
-	var envelope jsonrpc.RawRequest
-	if err := envelope.UnmarshalJSON(body); err != nil {
-		return &Error{Code: JSONRPCParseError, Message: "Parse error"}
-	}
-	if envelope.Invalid || envelope.JSONRPC != rpcVersion || !envelope.HasMethod || envelope.Method == "" || (envelope.HasID && envelope.ID == nil) {
-		return &Error{Code: JSONRPCInvalidRequest, Message: "Invalid request"}
-	}
-	// Notifications carry optional metadata and receive no JSON-RPC response.
-	if !envelope.HasID {
-		return nil
-	}
-	var params map[string]json.RawMessage
-	if json.Unmarshal(envelope.Params, &params) != nil || params == nil {
-		return &Error{Code: JSONRPCInvalidParams, Message: "params must be an object"}
-	}
-	var meta map[string]json.RawMessage
-	if json.Unmarshal(params["_meta"], &meta) != nil || meta == nil {
-		return &Error{Code: JSONRPCInvalidParams, Message: "params._meta must be an object"}
-	}
-	var version string
-	if raw := meta[protocolVersionKey]; bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &version) != nil {
-		return &Error{Code: JSONRPCInvalidParams, Message: "protocolVersion metadata is required"}
-	}
-	if token, present := meta["progressToken"]; present {
-		if _, err := protocolIDKey(token); err != nil {
-			return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
-		}
-	}
-	var capabilities map[string]json.RawMessage
-	if json.Unmarshal(meta[clientCapabilitiesKey], &capabilities) != nil || capabilities == nil {
-		return &Error{Code: JSONRPCInvalidParams, Message: "clientCapabilities metadata must be an object"}
+	envelope, params, version, capabilities, failure := validateRequestEnvelope(body)
+	if failure != nil || !envelope.HasID {
+		return failure
 	}
 	if len(request.Header.Values("MCP-Protocol-Version")) != 1 || len(request.Header.Values("Mcp-Method")) != 1 || request.Header.Get("MCP-Protocol-Version") != version || request.Header.Get("Mcp-Method") != envelope.Method {
 		return &Error{Code: HeaderMismatch, Message: "MCP version or method header does not match request"}
 	}
-	if version != ProtocolVersion {
-		data, err := json.Marshal(struct {
-			Supported []string `json:"supported"`
-			Requested string   `json:"requested"`
-		}{[]string{ProtocolVersion}, version})
-		if err != nil {
-			panic(err)
-		}
-		return &Error{Code: UnsupportedProtocolVersion, Message: "Unsupported protocol version", Data: data}
-	}
-
-	// Prompt arguments remain strings, including empty strings. Check their raw
-	// JSON types before a Go map can turn null into a zero string value.
-	if envelope.Method == methodPromptsGet {
-		if raw, present := params["arguments"]; present {
-			if failure := validateStringArguments(raw, "prompt"); failure != nil {
-				return failure
-			}
-		}
-	}
-
-	if envelope.Method == methodCompletionComplete {
-		if failure := validateCompletionRequest(params); failure != nil {
-			return failure
-		}
-	}
-
-	// A listen filter is checked before the source endpoint or its middleware
-	// runs. The same decoder supplies the transport's accepted-filter state.
-	if envelope.Method == methodSubscriptionsListen {
-		filter, err := decodeSubscriptionFilter(params["notifications"])
-		if err != nil {
-			return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
-		}
-		if len(filter.TaskIDs) > 0 {
-			if failure := requireTasksExtension(capabilities); failure != nil {
-				return failure
-			}
-		}
-	}
-
-	name, err := requestName(envelope.Method, params)
-	if err != nil {
-		return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+	name, failure := validateRequestOperation(envelope.Method, version, params, capabilities)
+	if failure != nil {
+		return failure
 	}
 	if name != nil {
 		values := request.Header.Values("Mcp-Name")
@@ -180,6 +111,108 @@ func ValidateTaskCapabilities(meta json.RawMessage) *Error {
 		return &Error{Code: JSONRPCInvalidParams, Message: "clientCapabilities metadata must be an object"}
 	}
 	return requireTasksExtension(capabilities)
+}
+
+// validateStdioRequest checks one stdio JSON-RPC message's envelope, release
+// metadata, client capabilities, and method parameters without HTTP headers.
+func validateStdioRequest(body []byte) (*jsonrpc.RawRequest, *Error) {
+	envelope, params, version, capabilities, failure := validateRequestEnvelope(body)
+	if failure != nil || !envelope.HasID {
+		return envelope, failure
+	}
+	if _, failure := validateRequestOperation(envelope.Method, version, params, capabilities); failure != nil {
+		return envelope, failure
+	}
+	return envelope, nil
+}
+
+// validateRequestEnvelope parses the JSON-RPC message and extracts the required
+// per-request metadata and client capabilities for request messages.
+func validateRequestEnvelope(body []byte) (*jsonrpc.RawRequest, map[string]json.RawMessage, string, map[string]json.RawMessage, *Error) {
+	var envelope jsonrpc.RawRequest
+	if err := envelope.UnmarshalJSON(body); err != nil {
+		return nil, nil, "", nil, &Error{Code: JSONRPCParseError, Message: "Parse error"}
+	}
+	if envelope.Invalid || envelope.JSONRPC != rpcVersion || !envelope.HasMethod || envelope.Method == "" || (envelope.HasID && envelope.ID == nil) {
+		return &envelope, nil, "", nil, &Error{Code: JSONRPCInvalidRequest, Message: "Invalid request"}
+	}
+	// Notifications carry optional metadata and receive no JSON-RPC response.
+	if !envelope.HasID {
+		return &envelope, nil, "", nil, nil
+	}
+	var params map[string]json.RawMessage
+	if json.Unmarshal(envelope.Params, &params) != nil || params == nil {
+		return &envelope, nil, "", nil, &Error{Code: JSONRPCInvalidParams, Message: "params must be an object"}
+	}
+	var meta map[string]json.RawMessage
+	if json.Unmarshal(params["_meta"], &meta) != nil || meta == nil {
+		return &envelope, nil, "", nil, &Error{Code: JSONRPCInvalidParams, Message: "params._meta must be an object"}
+	}
+	var version string
+	if raw := meta[protocolVersionKey]; bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &version) != nil {
+		return &envelope, nil, "", nil, &Error{Code: JSONRPCInvalidParams, Message: "protocolVersion metadata is required"}
+	}
+	if token, present := meta["progressToken"]; present {
+		if _, err := protocolIDKey(token); err != nil {
+			return &envelope, nil, "", nil, &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+		}
+	}
+	var capabilities map[string]json.RawMessage
+	if json.Unmarshal(meta[clientCapabilitiesKey], &capabilities) != nil || capabilities == nil {
+		return &envelope, nil, "", nil, &Error{Code: JSONRPCInvalidParams, Message: "clientCapabilities metadata must be an object"}
+	}
+	return &envelope, params, version, capabilities, nil
+}
+
+// validateRequestOperation checks the negotiated protocol revision and
+// transport-neutral parameter rules for one request message.
+func validateRequestOperation(method, version string, params, capabilities map[string]json.RawMessage) (*string, *Error) {
+	if version != ProtocolVersion {
+		data, err := json.Marshal(struct {
+			Supported []string `json:"supported"`
+			Requested string   `json:"requested"`
+		}{[]string{ProtocolVersion}, version})
+		if err != nil {
+			panic(err)
+		}
+		return nil, &Error{Code: UnsupportedProtocolVersion, Message: "Unsupported protocol version", Data: data}
+	}
+
+	// Prompt arguments remain strings, including empty strings. Check their raw
+	// JSON types before a Go map can turn null into a zero string value.
+	if method == methodPromptsGet {
+		if raw, present := params["arguments"]; present {
+			if failure := validateStringArguments(raw, "prompt"); failure != nil {
+				return nil, failure
+			}
+		}
+	}
+
+	if method == methodCompletionComplete {
+		if failure := validateCompletionRequest(params); failure != nil {
+			return nil, failure
+		}
+	}
+
+	// A listen filter is checked before the source endpoint or its middleware
+	// runs. The same decoder supplies the transport's accepted-filter state.
+	if method == methodSubscriptionsListen {
+		filter, err := decodeSubscriptionFilter(params["notifications"])
+		if err != nil {
+			return nil, &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+		}
+		if len(filter.TaskIDs) > 0 {
+			if failure := requireTasksExtension(capabilities); failure != nil {
+				return nil, failure
+			}
+		}
+	}
+
+	name, err := requestName(method, params)
+	if err != nil {
+		return nil, &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+	}
+	return name, nil
 }
 
 // requireTasksExtension checks one request's declared extension before a Task

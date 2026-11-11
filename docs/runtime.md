@@ -7500,24 +7500,30 @@ lifecycle contract is in [GenAI observability](../DESIGN.md#genai-observability-
 
 `runtime/mcp` invokes tools using MCP `2026-07-28`. Each request supplies its
 protocol version and actual client capabilities in `params._meta`. There is no
-initialization handshake, negotiated version, or session ID. Generated servers
-implement `server/discover`; clients can call tools without discovery first.
+initialization handshake, negotiated version, or session ID. Generated HTTP and
+stdio servers (`Mount` and `ServeStdio(ctx, r, w, endpoints)`) implement
+`server/discover`; clients can call tools without discovery first. When a
+service's JSON-RPC route declares URL path parameters, `ServeStdio` accepts
+those route values after `endpoints`, matching `NewCaller`. `ServeStdio`
+takes ownership of its input and output `*os.File` streams, interrupting blocked
+reads and writes and closing both descriptors when returning.
 
 ### Older HTTP clients
 
-Generated HTTP servers additionally accept basic MCP `2025-11-25` clients on
-that same POST URL. Regenerate the server to enable this support; application
-constructors and service interfaces stay the same. Built-in HTTP and stdio
-callers continue to send `2026-07-28`.
+Generated HTTP and stdio servers additionally accept basic MCP `2025-11-25`
+clients through the same configured Goa endpoints. Regenerate the server to
+enable this support; application constructors and service interfaces stay the
+same. Built-in HTTP and stdio callers continue to send `2026-07-28`.
 
 The older `initialize` request must include `protocolVersion`, a capabilities
 object, and `clientInfo` with a name and version. The reply names `2025-11-25`,
 including when the requested revision differs; the client decides whether it
-can continue with that revision. The server handles `notifications/initialized`
-and `ping` without saving a session. Subsequent calls must carry
-`MCP-Protocol-Version: 2025-11-25`; no session ID or modern mirrored method/name
-headers are required. Calls without a preceding handshake are also accepted
-when they explicitly name this revision.
+can continue with that revision. The server handles `notifications/initialized`,
+`notifications/cancelled` (on stdio), and `ping` without saving a session.
+Subsequent HTTP calls must carry `MCP-Protocol-Version: 2025-11-25`; no session
+ID or modern mirrored method/name headers are required. HTTP calls without a
+preceding handshake are also accepted when they explicitly name this revision;
+stdio connections accept `2025-11-25` calls after `initialize`.
 
 This path serves tools, resource catalogs and reads, prompt catalogs and reads,
 resource templates, and argument completion. It keeps the same token checks,
@@ -8298,9 +8304,9 @@ writes. No bounded completion is promised for a connected peer that stops readin
 
 
 A unary service method can call `mcp.ReportProgress(ctx, value, total, message)`
-and check its error. The generated HTTP adapter supplies the client's token and
-sends updates before the final result. Reporting without a requested token is a
-no-op, so the same method remains usable through ordinary transports. Progress
+and check its error. The generated HTTP and stdio adapters supply the client's
+token and send updates before the final result. Reporting without a requested
+token is a no-op, so the same method remains usable through ordinary transports. Progress
 values must be finite and strictly increase within that request. They are not
 normalized percentages; the protocol does not require a non-negative value or
 that progress stay below the optional total.
@@ -8403,9 +8409,10 @@ and retains no protocol session or resume cursor. The host decides whether to
 open a new listener with a fresh request ID. Callback failures also end the
 listener and are not retry signals.
 
-The shared HTTP producer uses `ServeSubscriptions` around a validated
-`subscriptions/listen` handler. The configured source first authenticates and
-selects the authorized subset, then calls `AcknowledgeSubscription(ctx, filter)`.
+The shared HTTP and stdio producers use `ServeSubscriptions` and
+`ServeStdioSubscriptions` around a validated `subscriptions/listen` handler.
+The configured source first authenticates and selects the authorized subset,
+then calls `AcknowledgeSubscription(ctx, filter)`.
 `ReportToolsChanged`, `ReportPromptsChanged`, `ReportResourcesChanged` and
 `ReportResourceUpdated(ctx, uri)` send only acknowledged change kinds. These
 functions require the active listen context; ordinary service contexts return an
@@ -8421,7 +8428,7 @@ and HTTP status. Cancellation ends delivery; retained contexts cannot send after
 the handler returns. Response headers written before acknowledgment remain on
 the stream. The producer neither authorizes a source nor advertises capability.
 
-Generated HTTP servers bind one typed source with
+Generated HTTP and stdio servers bind one typed source with
 [`SubscriptionSource()`](dsl.md#resource-update-subscriptions). The original
 configured Goa endpoint authenticates the request and receives native resource
 URIs and/or creator-named job selections. For a changed job, the adapter calls

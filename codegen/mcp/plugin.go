@@ -378,6 +378,7 @@ func planMCPJSONRPCServerImports(generation *goacodegen.Generation, data *Adapte
 		goacodegen.SimpleImport("fmt"),
 		goacodegen.SimpleImport("io"),
 		goacodegen.SimpleImport("net/http"),
+		goacodegen.SimpleImport("os"),
 		goacodegen.NewImport("goahttp", "goa.design/goa/v3/http"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
 	}

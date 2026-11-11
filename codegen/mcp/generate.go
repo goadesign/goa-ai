@@ -86,9 +86,20 @@ func applyMCPHTTPRules(plan *goagenerator.Plan, files []*codegen.File, services 
 		if err != nil {
 			return err
 		}
-		f.SectionTemplates = append(f.SectionTemplates, &codegen.SectionTemplate{
-			Name: "mcp-legacy-http", Source: mcpTemplates.Read("jsonrpc_server_legacy"), Data: legacy,
-		})
+		f.SectionTemplates = append(f.SectionTemplates,
+			&codegen.SectionTemplate{
+				Name: "mcp-legacy-http", Source: mcpTemplates.Read("jsonrpc_server_legacy"), Data: legacy,
+			},
+			&codegen.SectionTemplate{
+				Name:   "mcp-stdio-server",
+				Source: mcpTemplates.Read("jsonrpc_server_stdio"),
+				Data: mcpTransportData{
+					Transport:          transport,
+					SubscriptionSource: service.adapterData.SubscriptionSource,
+					Legacy:             legacy,
+				},
+			},
+		)
 		found := false
 		for _, s := range f.SectionTemplates {
 			if s == nil {
