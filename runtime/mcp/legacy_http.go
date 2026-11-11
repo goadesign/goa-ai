@@ -33,14 +33,7 @@ func IsLegacyHTTPRequest(request *http.Request, body []byte) bool {
 	if envelope.UnmarshalJSON(body) != nil || envelope.Method != methodInitialize {
 		return false
 	}
-	var params struct {
-		Meta map[string]json.RawMessage `json:"_meta"` //nolint:tagliatelle // MCP defines this field name.
-	}
-	if err := json.Unmarshal(envelope.Params, &params); err != nil {
-		return true
-	}
-	_, modern := params.Meta[protocolVersionKey]
-	return !modern
+	return !hasModernVersionMetadata(envelope.Params)
 }
 
 // DecodeLegacyHTTPRequest validates one basic older-protocol request and returns
@@ -49,6 +42,59 @@ func IsLegacyHTTPRequest(request *http.Request, body []byte) bool {
 // must explicitly name that revision in their HTTP header. Client capabilities
 // are not carried forward: this path offers no tasks or client-input requests.
 func DecodeLegacyHTTPRequest(request *http.Request, body []byte) (*jsonrpc.RawRequest, *Error) {
+	return decodeLegacyRequest(body, func(envelope *jsonrpc.RawRequest) *Error {
+		if !envelope.HasID {
+			if len(request.Header.Values("MCP-Protocol-Version")) != 1 || request.Header.Get("MCP-Protocol-Version") != LegacyProtocolVersion {
+				return &Error{Code: JSONRPCInvalidRequest, Message: "Legacy notifications require MCP-Protocol-Version: " + LegacyProtocolVersion}
+			}
+			return nil
+		}
+		headers := request.Header.Values("MCP-Protocol-Version")
+		if len(headers) > 1 || envelope.Method != methodInitialize && (len(headers) != 1 || headers[0] != LegacyProtocolVersion) {
+			return &Error{Code: JSONRPCInvalidRequest, Message: "Legacy calls require MCP-Protocol-Version: " + LegacyProtocolVersion}
+		}
+		return nil
+	})
+}
+
+// isLegacyStdioRequest selects the older 2025-11-25 revision on stdio when the
+// message is an initialize handshake or when the connection has already
+// completed initialize and the message omits modern per-request metadata.
+func isLegacyStdioRequest(body []byte, initialized bool) bool {
+	var envelope jsonrpc.RawRequest
+	if envelope.UnmarshalJSON(body) != nil || envelope.Invalid || !envelope.HasMethod {
+		return false
+	}
+	if hasModernVersionMetadata(envelope.Params) {
+		return false
+	}
+	if envelope.Method == methodInitialize {
+		return true
+	}
+	return initialized
+}
+
+// hasModernVersionMetadata reports whether params._meta carries the modern
+// per-request protocolVersion key.
+func hasModernVersionMetadata(raw json.RawMessage) bool {
+	var params struct {
+		Meta map[string]json.RawMessage `json:"_meta"` //nolint:tagliatelle // MCP defines this field name.
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return false
+	}
+	_, modern := params.Meta[protocolVersionKey]
+	return modern
+}
+
+// decodeLegacyStdioRequest validates one basic 2025-11-25 stdio request or
+// notification and injects the metadata required by generated Goa payload
+// decoders.
+func decodeLegacyStdioRequest(body []byte) (*jsonrpc.RawRequest, *Error) {
+	return decodeLegacyRequest(body, nil)
+}
+
+func decodeLegacyRequest(body []byte, checkHeaders func(*jsonrpc.RawRequest) *Error) (*jsonrpc.RawRequest, *Error) {
 	var envelope jsonrpc.RawRequest
 	if err := envelope.UnmarshalJSON(body); err != nil {
 		return nil, &Error{Code: JSONRPCParseError, Message: "Parse error"}
@@ -56,18 +102,15 @@ func DecodeLegacyHTTPRequest(request *http.Request, body []byte) (*jsonrpc.RawRe
 	if envelope.Invalid || envelope.JSONRPC != rpcVersion || !envelope.HasMethod || envelope.Method == "" || (envelope.HasID && envelope.ID == nil) {
 		return nil, &Error{Code: JSONRPCInvalidRequest, Message: "Invalid request"}
 	}
-	if envelope.Method == "notifications/initialized" && !envelope.HasID {
-		if len(request.Header.Values("MCP-Protocol-Version")) != 1 || request.Header.Get("MCP-Protocol-Version") != LegacyProtocolVersion {
-			return nil, &Error{Code: JSONRPCInvalidRequest, Message: "Legacy notifications require MCP-Protocol-Version: " + LegacyProtocolVersion}
+	if checkHeaders != nil {
+		if failure := checkHeaders(&envelope); failure != nil {
+			return nil, failure
 		}
-		return &envelope, nil
 	}
+	// Per JSON-RPC 2.0 section 4.1, syntactically valid notifications never
+	// produce a response, including notifications for unsupported methods.
 	if !envelope.HasID {
-		return nil, &Error{Code: JSONRPCInvalidRequest, Message: "This legacy method requires a request ID"}
-	}
-	headers := request.Header.Values("MCP-Protocol-Version")
-	if len(headers) > 1 || envelope.Method != methodInitialize && (len(headers) != 1 || headers[0] != LegacyProtocolVersion) {
-		return nil, &Error{Code: JSONRPCInvalidRequest, Message: "Legacy calls require MCP-Protocol-Version: " + LegacyProtocolVersion}
+		return &envelope, nil
 	}
 	params := make(map[string]json.RawMessage)
 	if len(envelope.Params) != 0 && (json.Unmarshal(envelope.Params, &params) != nil || params == nil) {

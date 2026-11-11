@@ -70,7 +70,7 @@
 3. **Generate Code**:
    - The **Agent plugin** (`codegen/agent`) emits per-agent packages (`gen/<service>/agents/<agent>/`), service-shared toolset specifications (`gen/<service>/toolsets/<toolset>/`), operation runners (`gen/<service>/operations/<op>/`), standalone value codecs (`gen/<service>/codecs/<codec>/`), and typed completions (`gen/<service>/completions/`).
    - The **Eval plugin** (`codegen/eval`) emits deterministic evaluation suites (`gen/evals/<suite>/`) and scenario harnesses.
-   - The **MCP plugin** (`codegen/mcp`) emits JSON-RPC 2.0 MCP handlers, service-method adapters, typed clients, and SSE/HTTP streamable transports (`gen/mcp_<service>/` and `gen/jsonrpc/mcp_<service>/`).
+   - The **MCP plugin** (`codegen/mcp`) emits JSON-RPC 2.0 MCP handlers, service-method adapters, typed clients, and SSE/HTTP streamable and newline-delimited stdio transports (`gen/mcp_<service>/` and `gen/jsonrpc/mcp_<service>/`).
 4. **Execute**: Application binaries construct `runtime.Runtime` with a workflow engine (`features/engine/temporal` or `features/engine/inmem`), a session store (`features/session/mongo` or in-memory), a Pulse stream sink (`features/stream/pulse`), and model clients, then register generated agents and toolsets before activating workers.
 
 ```
@@ -158,7 +158,7 @@ goa-ai/
     │   └── codecs/<codec>/       # Standalone value codecs
     ├── evals/<suite>/            # Generated evaluation suite runners
     ├── mcp_<svc>/                # Generated MCP server, adapter, client, and notification encoders
-    └── jsonrpc/mcp_<svc>/        # Generated JSON-RPC HTTP and SSE transport handlers/clients
+    └── jsonrpc/mcp_<svc>/        # Generated JSON-RPC HTTP, SSE, and stdio transport handlers/clients
 ```
 
 ---
@@ -528,7 +528,7 @@ Goa-AI provides a complete Model Context Protocol (MCP) implementation (`dsl/mcp
 
 ### Protocol and Ownership
 
-- **JSON-RPC 2.0 Transport**: Generated MCP servers expose the standard MCP methods (`initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `prompts/list`, `prompts/get`, `completion/complete`, `tasks/get`, `tasks/result`, `tasks/list`, `tasks/cancel`) over Streamable HTTP and SSE (`gen/jsonrpc/mcp_<service>/`).
+- **JSON-RPC 2.0 Transport**: Generated MCP servers expose the standard MCP methods (`initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `prompts/list`, `prompts/get`, `completion/complete`, `tasks/get`, `tasks/result`, `tasks/list`, `tasks/cancel`) over Streamable HTTP, SSE, and newline-delimited stdio (`gen/jsonrpc/mcp_<service>/`).
 - **Service-Method Delegation**: Every MCP tool, resource, prompt, completion, or task operation binds to an underlying Goa service `Method`. The generated `MCPAdapter` translates between MCP wire envelopes and the service's native Go payload/result structs so business logic stays transport-agnostic.
 
 ### Catalog ownership and generated definitions
@@ -564,7 +564,7 @@ Running `goa gen` on an MCP-enabled service produces two coordinated packages:
    - `client.go`: A strongly typed Go `Client` that implements `mcpruntime.Caller` for invoking remote MCP servers from Goa-AI agents.
    - `notification_encode.go`: Encoders for server-initiated notifications (`notifications/resources/updated`, `notifications/tools/list_changed`, progress updates).
 2. **`gen/jsonrpc/mcp_<service>/`**:
-   - HTTP and SSE JSON-RPC 2.0 server mounts (`NewServer`, `Mount`) and client transports with session header management (`Mcp-Session-Id`) and protocol version negotiation (`MCP-Protocol-Version`).
+   - HTTP, SSE, and newline-delimited stdio JSON-RPC 2.0 server entrypoints (`NewServer`, `Mount`, `ServeStdio`) and client transports with session header management (`Mcp-Session-Id`) and protocol version negotiation (`MCP-Protocol-Version`).
 
 ### Tasks, Subscriptions, Completions, and Content Blocks
 

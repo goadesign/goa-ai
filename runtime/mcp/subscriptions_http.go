@@ -21,6 +21,12 @@ import (
 type (
 	subscriptionSenderKey struct{}
 
+	// subscriptionSender delivers acknowledged subscription events for one active
+	// subscriptions/listen request on either HTTP or stdio.
+	subscriptionSender interface {
+		send(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) error
+	}
+
 	// subscriptionHTTPResponse owns output and accepted filters for one request.
 	// The generated handler's final response stays private until it is complete.
 	subscriptionHTTPResponse struct {
@@ -50,17 +56,7 @@ type (
 // Returning a complete result ends the stream; cancellation and failed writes
 // return errors. This function neither authenticates nor advertises a source.
 func ServeSubscriptions(w http.ResponseWriter, r *http.Request, id, params json.RawMessage, next http.HandlerFunc) (err error) {
-	key, err := protocolIDKey(id)
-	if err != nil {
-		return err
-	}
-	var input struct {
-		Notifications json.RawMessage `json:"notifications"`
-	}
-	if err := json.Unmarshal(params, &input); err != nil {
-		return err
-	}
-	filter, err := decodeSubscriptionFilter(input.Notifications)
+	key, filter, err := parseSubscriptionRequest(id, params)
 	if err != nil {
 		return err
 	}
@@ -80,7 +76,7 @@ func ServeSubscriptions(w http.ResponseWriter, r *http.Request, id, params json.
 		state: subscriptionState{requested: filter},
 	}
 	defer response.close()
-	ctx = context.WithValue(ctx, subscriptionSenderKey{}, response)
+	ctx = context.WithValue(ctx, subscriptionSenderKey{}, subscriptionSender(response))
 	next(response, r.WithContext(ctx))
 	return response.finish(ctx)
 }
@@ -144,27 +140,6 @@ func ReportTaskChanged(ctx context.Context, snapshot json.RawMessage) error {
 	return sendSubscription(ctx, SubscriptionTaskChanged, nil, result.task.info.TaskID, fields)
 }
 
-// sendSubscription obtains the request-owned writer and refuses ordinary service
-// contexts. A source cannot accidentally send changes on another operation.
-func sendSubscription(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) (err error) {
-	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.subscription.notification.send", trace.WithAttributes(attribute.String("notification.method", string(kind))))
-	defer span.End()
-	defer func() {
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
-	}()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	sender, ok := ctx.Value(subscriptionSenderKey{}).(*subscriptionHTTPResponse)
-	if !ok {
-		return errors.New("MCP subscription report requires an active listen request")
-	}
-	return sender.send(ctx, kind, accepted, uri, task)
-}
-
 func (r *subscriptionHTTPResponse) Header() http.Header {
 	return r.header
 }
@@ -182,6 +157,117 @@ func (r *subscriptionHTTPResponse) Write(data []byte) (int, error) {
 	return r.body.Write(data)
 }
 
+// parseSubscriptionRequest validates the request ID and requested notification
+// filter for one subscriptions/listen operation.
+func parseSubscriptionRequest(id, params json.RawMessage) (string, SubscriptionFilter, error) {
+	key, err := protocolIDKey(id)
+	if err != nil {
+		return "", SubscriptionFilter{}, err
+	}
+	var input struct {
+		Notifications json.RawMessage `json:"notifications"`
+	}
+	if err := json.Unmarshal(params, &input); err != nil {
+		return "", SubscriptionFilter{}, err
+	}
+	filter, err := decodeSubscriptionFilter(input.Notifications)
+	if err != nil {
+		return "", SubscriptionFilter{}, err
+	}
+	return key, filter, nil
+}
+
+// sendSubscription obtains the request-owned writer and refuses ordinary service
+// contexts. A source cannot accidentally send changes on another operation.
+func sendSubscription(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) (err error) {
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.subscription.notification.send", trace.WithAttributes(attribute.String("notification.method", string(kind))))
+	defer span.End()
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sender, ok := ctx.Value(subscriptionSenderKey{}).(subscriptionSender)
+	if !ok {
+		return errors.New("MCP subscription report requires an active listen request")
+	}
+	return sender.send(ctx, kind, accepted, uri, task)
+}
+
+// encodeSubscriptionNotification validates one acknowledgment or change against
+// the request's subscription state and encodes its JSON-RPC notification bytes.
+func encodeSubscriptionNotification(state *subscriptionState, id json.RawMessage, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) ([]byte, error) {
+	params := subscriptionNotificationParams{Meta: map[string]json.RawMessage{subscriptionIDKey: id}, Notifications: accepted, URI: uri}
+	if kind == SubscriptionAcknowledged {
+		if err := state.acknowledge(*accepted); err != nil {
+			return nil, err
+		}
+	} else if err := state.change(kind, uri); err != nil {
+		return nil, err
+	}
+	var notificationParams any = params
+	if kind == SubscriptionTaskChanged {
+		meta := make(map[string]json.RawMessage)
+		if raw, present := task["_meta"]; present {
+			if err := json.Unmarshal(raw, &meta); err != nil {
+				return nil, err
+			}
+		}
+		if _, present := meta[subscriptionIDKey]; present {
+			return nil, errors.New("task source must leave subscription ID ownership to the transport")
+		}
+		meta[subscriptionIDKey] = id
+		encoded, err := json.Marshal(meta)
+		if err != nil {
+			return nil, err
+		}
+		task["_meta"] = encoded
+		notificationParams = task
+	}
+	return json.Marshal(rpcNotification{JSONRPC: rpcVersion, Method: string(kind), Params: notificationParams})
+}
+
+// completeSubscriptionResult validates a completed subscription result and
+// attaches the transport-owned subscription ID to its _meta object.
+func completeSubscriptionResult(state *subscriptionState, id, rawResult json.RawMessage) (json.RawMessage, error) {
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(rawResult, &result); err != nil || result == nil {
+		return nil, errors.New("generated MCP subscription completion must be an object")
+	}
+	for name := range result {
+		if name != "resultType" && name != "_meta" {
+			return nil, fmt.Errorf("generated MCP subscription completion contains unexpected field %q", name)
+		}
+	}
+	if !state.acknowledged {
+		return nil, &Error{Code: JSONRPCInternalError, Message: "MCP subscription completion requires acknowledgment before a finished result"}
+	}
+	var resultType string
+	if err := json.Unmarshal(result["resultType"], &resultType); err != nil || resultType != resultComplete {
+		return nil, errors.New("generated MCP subscription completion requires acknowledgment and resultType complete")
+	}
+	meta := make(map[string]json.RawMessage)
+	if raw, present := result["_meta"]; present {
+		if err := json.Unmarshal(raw, &meta); err != nil || meta == nil {
+			return nil, errors.New("generated MCP subscription completion metadata must be an object")
+		}
+	}
+	if _, present := meta[subscriptionIDKey]; present {
+		return nil, errors.New("generated MCP handler must leave subscription ID ownership to the transport")
+	}
+	meta[subscriptionIDKey] = id
+	var err error
+	result["_meta"], err = json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(result)
+}
+
 // send checks the request's accepted filter before writing any bytes. Each
 // request serializes sends and remembers its first delivery error.
 func (r *subscriptionHTTPResponse) send(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) error {
@@ -190,34 +276,7 @@ func (r *subscriptionHTTPResponse) send(ctx context.Context, kind SubscriptionEv
 	if err := r.writable(ctx); err != nil {
 		return err
 	}
-	params := subscriptionNotificationParams{Meta: map[string]json.RawMessage{subscriptionIDKey: r.id}, Notifications: accepted, URI: uri}
-	if kind == SubscriptionAcknowledged {
-		if err := r.state.acknowledge(*accepted); err != nil {
-			return err
-		}
-	} else if err := r.state.change(kind, uri); err != nil {
-		return err
-	}
-	var notificationParams any = params
-	if kind == SubscriptionTaskChanged {
-		meta := make(map[string]json.RawMessage)
-		if raw, present := task["_meta"]; present {
-			if err := json.Unmarshal(raw, &meta); err != nil {
-				return err
-			}
-		}
-		if _, present := meta[subscriptionIDKey]; present {
-			return errors.New("task source must leave subscription ID ownership to the transport")
-		}
-		meta[subscriptionIDKey] = r.id
-		encoded, err := json.Marshal(meta)
-		if err != nil {
-			return err
-		}
-		task["_meta"] = encoded
-		notificationParams = task
-	}
-	data, err := json.Marshal(rpcNotification{JSONRPC: rpcVersion, Method: string(kind), Params: notificationParams})
+	data, err := encodeSubscriptionNotification(&r.state, r.id, kind, accepted, uri, task)
 	if err != nil {
 		return err
 	}
@@ -261,33 +320,7 @@ func (r *subscriptionHTTPResponse) finish(ctx context.Context) error {
 	}
 	data := r.body.Bytes()
 	if len(response.Error) == 0 {
-		var result map[string]json.RawMessage
-		if err := json.Unmarshal(response.Result, &result); err != nil || result == nil {
-			return errors.New("generated MCP subscription completion must be an object")
-		}
-		for name := range result {
-			if name != "resultType" && name != "_meta" {
-				return fmt.Errorf("generated MCP subscription completion contains unexpected field %q", name)
-			}
-		}
-		if !r.state.acknowledged {
-			return &Error{Code: JSONRPCInternalError, Message: "MCP subscription completion requires acknowledgment before a finished result"}
-		}
-		var resultType string
-		if err := json.Unmarshal(result["resultType"], &resultType); err != nil || resultType != resultComplete {
-			return errors.New("generated MCP subscription completion requires acknowledgment and resultType complete")
-		}
-		meta := make(map[string]json.RawMessage)
-		if raw, present := result["_meta"]; present {
-			if err := json.Unmarshal(raw, &meta); err != nil || meta == nil {
-				return errors.New("generated MCP subscription completion metadata must be an object")
-			}
-		}
-		if _, present := meta[subscriptionIDKey]; present {
-			return errors.New("generated MCP handler must leave subscription ID ownership to the transport")
-		}
-		meta[subscriptionIDKey] = r.id
-		result["_meta"], err = json.Marshal(meta)
+		completed, err := completeSubscriptionResult(&r.state, r.id, response.Result)
 		if err != nil {
 			return err
 		}
@@ -295,10 +328,7 @@ func (r *subscriptionHTTPResponse) finish(ctx context.Context) error {
 		if err := json.Unmarshal(data, &envelope); err != nil {
 			return err
 		}
-		envelope["result"], err = json.Marshal(result)
-		if err != nil {
-			return err
-		}
+		envelope["result"] = completed
 		data, err = json.Marshal(envelope)
 		if err != nil {
 			return err

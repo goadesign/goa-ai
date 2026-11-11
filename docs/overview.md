@@ -106,10 +106,10 @@ contracts, and result views retain their ordinary meaning. HTTP and gRPC methods
 can coexist with MCP methods.
 
 Servers expose tools, resources, prompts, completions, paginated catalogs,
-progress, subscriptions, additional input, and native durable Tasks. Generated
-clients consume those contracts; shared runtime consumers support HTTP and stdio.
-Generated stdio servers remain deferred. MCP clients and servers do not require
-an agent runtime.
+progress, subscriptions, additional input, and native durable Tasks over HTTP and
+newline-delimited stdio (`ServeStdio`). Generated clients consume those
+contracts; shared runtime consumers support HTTP and stdio. MCP clients and
+servers do not require an agent runtime.
 
 `InputExchange` and `TaskExchange` bind existing service operations. They do not
 create an adapter-owned job store. Service code owns durable acceptance, job
