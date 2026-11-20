@@ -29,6 +29,10 @@ type (
 		// Description provides a human-readable explanation of the
 		// server's purpose.
 		Description string
+		// Instructions is the guidance on using this server that discovery
+		// returns for clients to add to the model's system prompt. Empty means
+		// the design declares none.
+		Instructions string
 		// Requirements declares bearer access and basic scopes for the MCP resource.
 		Requirements []*expr.SecurityExpr
 		// Tools is the collection of tool expressions exposed by this

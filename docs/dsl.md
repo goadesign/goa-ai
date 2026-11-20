@@ -527,6 +527,7 @@ an estimate is not a context-window guarantee or a billing count.
 | Function                            | Context                            | Purpose                                                                       |
 | ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
 | `MCP(name, version)`                | Inside `Service`                   | Enables MCP protocol for the service                                          |
+| `ServerInstructions(text)`          | Inside `MCP`                       | Returns guidance on using the server from discovery                           |
 | `DynamicTools()`                    | Inside `MCP`                       | Generates tool list/call methods implemented by the application                |
 | `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                                                      |
 | `ToolContent(field)`                | Inside an MCP method's `Tool` block| Sends a typed result array as MCP content, excluding it from structured JSON  |
@@ -1569,6 +1570,27 @@ For this route, pass `"blue"` as its final argument. Tool calls then supply only
 domain arguments. The imported `NewHTTPCaller` instead receives a complete
 endpoint URL, such as `https://example.com/organizations/blue/mcp`.
 Regenerate clients, servers and agent contracts together when upgrading.
+
+### Server instructions
+
+Use `ServerInstructions(text)` inside `MCP` to tell clients what the server is
+for and when to use its tools:
+
+```go
+Service("notes", func() {
+    MCP("notes", "1.0.0", func() {
+        ServerInstructions(`The notes hold the user's work logs and past decisions.
+Search them with search_notes before answering a question that may depend on them.`)
+    })
+    JSONRPC(func() { POST("/mcp") })
+})
+```
+
+Clients may add the text to the model's system prompt, where the model reads it
+even when it loads tool definitions on demand. Write guidance that spans the
+tools, and do not repeat the tool descriptions. Discovery returns the text as
+`instructions`; it is written into the generated server and does not change at
+run time. Declare it at most once per server. Servers without it omit the field.
 
 ### Runtime-defined tools
 

@@ -33,6 +33,9 @@ type (
 		MCPName string
 		// MCPVersion is the server version returned in MCP response metadata.
 		MCPVersion string
+		// Instructions is the authored server guidance returned by discovery,
+		// or empty when the design declares none.
+		Instructions string
 		// Package is the import name of the generated Goa service package.
 		Package string
 		// MCPPackage is the import name of the generated MCP service package.
@@ -301,6 +304,7 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		ServiceGoName:        codegen.Goify(g.originalService.Name, true),
 		MCPName:              g.mcp.Name,
 		MCPVersion:           g.mcp.Version,
+		Instructions:         g.mcp.Instructions,
 		Package:              codegen.SnakeCase(g.originalService.Name),
 		Tools:                tools,
 		DynamicTools:         g.mcp.DynamicTools,
