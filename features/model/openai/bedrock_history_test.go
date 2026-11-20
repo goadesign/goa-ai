@@ -28,7 +28,7 @@ import (
 type imageRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func TestBedrockImageCountPreservesHistoryAndInference(t *testing.T) {
-	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol", "global.openai.gpt-6.2-sol"} {
 		t.Run(modelID, func(t *testing.T) {
 			for _, format := range []model.ImageFormat{model.ImageFormatJPEG, model.ImageFormatPNG} {
 				t.Run(string(format), func(t *testing.T) {

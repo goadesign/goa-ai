@@ -32,7 +32,7 @@ func TestBedrockImageCountFormats(t *testing.T) {
 	// This complete one-pixel lossless WebP decodes through x/image/webp.
 	webpBytes, err := base64.StdEncoding.DecodeString("UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=")
 	require.NoError(t, err)
-	for _, modelID := range []string{"global.openai.gpt-5.6-sol", "global.openai.gpt-5.6-terra", "global.openai.gpt-5.6-luna", "global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+	for _, modelID := range []string{"global.openai.gpt-5.6-sol", "global.openai.gpt-5.6-terra", "global.openai.gpt-5.6-luna", "global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol", "global.openai.gpt-6.2-sol", "us.openai.gpt-6.2-sol", "us-gov.openai.gpt-6.2-sol", "openai.gpt-6.2-sol", "gpt-6.2-sol"} {
 		t.Run(modelID, func(t *testing.T) {
 			for _, test := range []struct {
 				name string
@@ -101,7 +101,7 @@ func TestBedrockSolImageEstimateDoesNotImposeGPT56Limits(t *testing.T) {
 	binary.BigEndian.PutUint32(header[16:20], 65536)
 	binary.BigEndian.PutUint32(header[20:24], 512)
 	binary.BigEndian.PutUint32(header[29:33], crc32.ChecksumIEEE(header[12:29]))
-	for _, modelID := range []string{"global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+	for _, modelID := range []string{"global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol", "global.openai.gpt-6.2-sol"} {
 		t.Run(modelID, func(t *testing.T) {
 			count, err := bedrockImageTokenCount(modelID, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(header))
 			require.NoError(t, err)
@@ -156,13 +156,15 @@ func TestBedrockImageCountExactDimensionFit(t *testing.T) {
 }
 
 func TestBedrockImageCountCapabilityAndMalformedImage(t *testing.T) {
-	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra", "global.openai.gpt-6-sol", "us.openai.gpt-6-sol", "openai.gpt-6-sol", "gpt-6-sol", "global.openai.gpt-6.1-sol", "us.openai.gpt-6.1-sol", "us-gov.openai.gpt-6.1-sol", "openai.gpt-6.1-sol", "gpt-6.1-sol"} {
+	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra", "global.openai.gpt-6-sol", "us.openai.gpt-6-sol", "openai.gpt-6-sol", "gpt-6-sol", "global.openai.gpt-6.1-sol", "us.openai.gpt-6.1-sol", "us-gov.openai.gpt-6.1-sol", "openai.gpt-6.1-sol", "gpt-6.1-sol", "global.openai.gpt-6.2-sol", "us.openai.gpt-6.2-sol", "us-gov.openai.gpt-6.2-sol", "openai.gpt-6.2-sol", "gpt-6.2-sol"} {
 		_, err := bedrockImageTokenCount(modelID, "data:image/jpeg;base64,invalid")
 		require.ErrorContains(t, err, "decode image dimensions")
 	}
-	_, err := bedrockImageTokenCount("unrecognized-model", "data:image/jpeg;base64,invalid")
-	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
-	_, err = bedrockImageTokenCount(bedrockTestModel, "invalid")
+	for _, modelID := range []string{"unrecognized-model", "global.openai.gpt-6.2-terra", "global.openai.gpt-6.2-luna", "global.openai.gpt-6.2-sol-extra", "global.openai.gpt-6.3-sol"} {
+		_, err := bedrockImageTokenCount(modelID, "data:image/jpeg;base64,invalid")
+		require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
+	}
+	_, err := bedrockImageTokenCount(bedrockTestModel, "invalid")
 	require.ErrorContains(t, err, "requires an encoded image data URL")
 	raw, err := newProvider(Options{DefaultModel: "unrecognized-model", ThinkingEffort: "medium", transport: &mockTransport{}}, true)
 	require.NoError(t, err)
@@ -186,28 +188,32 @@ func TestBedrockImageCountIncludesNativeToolResults(t *testing.T) {
 	var encoded bytes.Buffer
 	require.NoError(t, png.Encode(&encoded, image.NewGray(image.Rect(0, 0, 1, 1))))
 	data := base64.StdEncoding.EncodeToString(encoded.Bytes())
-	raw, err := newProvider(Options{DefaultModel: bedrockTestModel, ThinkingEffort: "medium", transport: &mockTransport{}}, true)
-	require.NoError(t, err)
-	request := bedrockTestRequest()
-	request.Messages = []*model.Message{
-		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "call-1", Name: "screen.select", Input: rawjson.Message(bedrockTestArguments)}}},
-		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "call-1", Blocks: content.Blocks{
-			&content.ImageContent{Data: data, MIMEType: "image/png"},
-			&content.ImageContent{Data: data, MIMEType: "image/png"},
-		}}}},
+	for _, modelID := range []string{bedrockTestModel, "global.openai.gpt-6.2-sol"} {
+		t.Run(modelID, func(t *testing.T) {
+			raw, err := newProvider(Options{DefaultModel: modelID, ThinkingEffort: "medium", transport: &mockTransport{}}, true)
+			require.NoError(t, err)
+			request := bedrockTestRequest()
+			request.Messages = []*model.Message{
+				{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "call-1", Name: "screen.select", Input: rawjson.Message(bedrockTestArguments)}}},
+				{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "call-1", Blocks: content.Blocks{
+					&content.ImageContent{Data: data, MIMEType: "image/png"},
+					&content.ImageContent{Data: data, MIMEType: "image/png"},
+				}}}},
+			}
+			prepared, err := raw.prepareRequest(request)
+			require.NoError(t, err)
+			count, err := bedrockImageTokens(prepared)
+			require.NoError(t, err)
+			assert.Equal(t, 4, count)
+			output := prepared.request.Input.OfInputItemList[1].OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray
+			assert.Empty(t, output[1].OfInputImage.ImageURL.Value)
+			assert.Empty(t, output[2].OfInputImage.ImageURL.Value)
+			assert.Equal(t, data, request.Messages[1].Parts[0].(model.ToolResultPart).Blocks[0].(*content.ImageContent).Data)
+			// Preparing the inference request still emits exact supplied bytes.
+			inference, err := raw.prepareRequest(request)
+			require.NoError(t, err)
+			image := inference.request.Input.OfInputItemList[1].OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray[1].OfInputImage
+			assert.Equal(t, "data:image/png;base64,"+data, image.ImageURL.Value)
+		})
 	}
-	prepared, err := raw.prepareRequest(request)
-	require.NoError(t, err)
-	count, err := bedrockImageTokens(prepared)
-	require.NoError(t, err)
-	assert.Equal(t, 4, count)
-	output := prepared.request.Input.OfInputItemList[1].OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray
-	assert.Empty(t, output[1].OfInputImage.ImageURL.Value)
-	assert.Empty(t, output[2].OfInputImage.ImageURL.Value)
-	assert.Equal(t, data, request.Messages[1].Parts[0].(model.ToolResultPart).Blocks[0].(*content.ImageContent).Data)
-	// Preparing the inference request still emits exact supplied bytes.
-	inference, err := raw.prepareRequest(request)
-	require.NoError(t, err)
-	image := inference.request.Input.OfInputItemList[1].OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray[1].OfInputImage
-	assert.Equal(t, "data:image/png;base64,"+data, image.ImageURL.Value)
 }
