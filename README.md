@@ -378,6 +378,8 @@ Choose model adapters for OpenAI, Anthropic, Amazon Bedrock, Google Vertex AI,
 or a model gateway. [Provider support](docs/runtime.md#model-clients) varies by
 model and API. Optional integrations include MongoDB for memory and prompt
 overrides, and Redis/Pulse for streams and registries.
+The Bedrock Responses adapter estimates image tokens for an explicit model list.
+See the [counting contract](docs/runtime.md#openai-responses-on-amazon-bedrock).
 
 Your application owns planners, service behavior, authorization, side-effect
 idempotency, durable storage, and deployment. Configure the Temporal engine

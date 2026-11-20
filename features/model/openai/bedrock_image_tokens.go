@@ -58,20 +58,21 @@ func bedrockImageTokens(prepared *preparedRequest) (int, error) {
 // bedrockImageTokenCount estimates image tokens from 32-pixel patches with a
 // 1.2 multiplier. GPT-5.6 additionally applies its documented dimension and
 // patch limits (https://developers.openai.com/api/docs/guides/images-vision).
-// For GPT-6 Sol and GPT-6.1 Sol this is a local estimate, not a billing formula or an
-// assertion about provider image limits. Response usage owns accounting.
+// For GPT-6 Sol, GPT-6.1 Sol, and GPT-6.2 Sol, this is a local estimate.
+// It does not define billing or provider image limits. Response usage supplies
+// accounting totals.
 func bedrockImageTokenCount(modelID, dataURL string) (int, error) {
 	_, name, found := strings.Cut(modelID, ".openai.")
 	if !found {
 		name = strings.TrimPrefix(modelID, "openai.")
 	}
-	// Only GPT-5.6 applies documented image limits. The two supported Sol 6
-	// models use the declared estimate and leave image acceptance to the provider.
+	// Only GPT-5.6 applies documented image limits. The listed Sol models
+	// use the local estimate. The provider validates their images.
 	applyImageLimits := false
 	switch name {
 	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
 		applyImageLimits = true
-	case "gpt-6-sol", "gpt-6.1-sol":
+	case "gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol":
 	default:
 		return 0, fmt.Errorf("openai: image token counting for model %q: %w", modelID, model.ErrTokenCountingUnsupported)
 	}

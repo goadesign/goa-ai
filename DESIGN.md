@@ -453,6 +453,11 @@ Streaming model adapters (`features/model/bedrock`, `anthropic`, `openai`, `gemi
 
 ### Model Clients, Adaptive Rate Limiting, and Capability Gates
 
+The Bedrock Responses adapter (`features/model/openai`) estimates image tokens
+with `Exact=false` for an explicit model list. Other models return
+`model.ErrTokenCountingUnsupported`. Provider response usage supplies accounting totals.
+See the [counting contract](docs/runtime.md#openai-responses-on-amazon-bedrock).
+
 - **Adaptive Token-Bucket Rate Limiter (`features/model/middleware`)**: `AdaptiveRateLimiter` wraps any `model.Client` with cluster-coordinated (Pulse `rmap`) or process-local AIMD (Additive Increase / Multiplicative Decrease) token budgeting:
   - Before invoking the model, `Reserve` estimates input token cost and acquires capacity from the shared token bucket.
   - When the stream finishes, `Settle` reconciles actual provider-reported token usage against the reservation and adjusts the target TPM (tokens per minute) rate—increasing linearly on sustained throughput and backing off multiplicatively when a provider returns `429 TooManyRequests` / throttling exceptions.
