@@ -44,6 +44,7 @@ func (b *mcpExprBuilder) buildDiscoverResultType() *expr.AttributeExpr {
 		Type: &expr.Object{
 			{Name: "supportedVersions", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String}}, Description: "Protocol revisions implemented by this release"}},
 			{Name: "capabilities", Attribute: &expr.AttributeExpr{Type: b.getOrCreateType("ServerCapabilities", b.buildServerCapabilitiesType), Description: "Operations declared by this service"}},
+			{Name: "instructions", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Guidance on using this server that clients may add to the model's system prompt"}},
 		},
 		Validation: &expr.ValidationExpr{Required: []string{"supportedVersions", "capabilities"}},
 	}

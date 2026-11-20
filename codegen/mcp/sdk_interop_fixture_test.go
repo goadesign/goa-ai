@@ -143,7 +143,7 @@ var resourceEvent = Type("ResourceEvent", func() {
 var _ = Service("records", func() {
 	Description("Reads synthetic records for independent protocol checks.")
 	JSONRPC(func() { POST("/mcp") })
-	MCP("records", "1")
+	MCP("records", "1", func() { ServerInstructions("Read records with the \"read\" tool.\nThe records are synthetic.") })
 	Method("read", func() {
 		Description("Returns a record identifier supplied by the caller.")
 		Payload(func() { Field(1, "name", String, "Record identifier", func() { MinLength(1) }); Required("name") })
@@ -511,6 +511,7 @@ func testSDKClientReadsGeneratedServer(t *testing.T, version string) {
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, session.Close()) }()
 	assert.Equal(t, version, session.InitializeResult().ProtocolVersion)
+	assert.Equal(t, "Read records with the \"read\" tool.\nThe records are synthetic.", session.InitializeResult().Instructions)
 	catalog, err := session.ListTools(t.Context(), nil)
 	require.NoError(t, err)
 	require.Len(t, catalog.Tools, 4)
@@ -664,6 +665,7 @@ func TestSDKCommandTransportReadsGeneratedStdioServer(t *testing.T) {
 
 	assert.Equal(t, mcpruntime.LegacyProtocolVersion, session.InitializeResult().ProtocolVersion)
 	assert.Equal(t, "records", session.InitializeResult().ServerInfo.Name)
+	assert.Equal(t, "Read records with the \"read\" tool.\nThe records are synthetic.", session.InitializeResult().Instructions)
 	require.NoError(t, session.Ping(t.Context(), nil))
 
 	catalog, err := session.ListTools(t.Context(), nil)
