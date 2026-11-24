@@ -920,22 +920,21 @@ fit within 65,535 pixels on each side, count 32-pixel patches, and round up the
 multiple valid images add their counts independently. PNG, JPEG, GIF, and WebP
 headers are decoded without altering the image sent for inference.
 
-GPT-6 Sol and GPT-6.1 Sol use a local estimate of 32-pixel patches times 1.2, rounded up,
-without applying GPT-5.6 image limits or resizing. This is an admission and
-compaction estimate, not a documented Sol billing formula or an upper bound.
-AWS validates the actual images; accounting uses the response usage.
+Other Bedrock Responses models (including GPT-6 Sol, GPT-6.1 Sol, GPT-6.1 Terra,
+GPT-6.2 Sol, and newer models) default to a local estimate of 32-pixel patches
+times 1.2, rounded up, without applying GPT-5.6 image limits or resizing. This
+is an admission and compaction estimate, not a documented billing formula or an
+upper bound. AWS validates the actual model and images; accounting uses the
+response usage.
 
-Image counting for another model returns `model.ErrTokenCountingUnsupported`
-with the model name. This tightens the previous wire-byte approximation for
-unknown models; text-only counting still accepts arbitrary configured model
-IDs. Unreadable image headers return a counting error. Completion and streaming
-keep their existing provider-owned validation and never depend on local image
-counting rules. The estimate is neither billing usage nor a context-window
-guarantee; exact-count callers must reject it. Direct OpenAI counting remains
-unsupported. This is a framework provider integration, not a
-complete migration for an application whose history fitting, explicit count
-API or rate admission requires exact token counts. Those application contracts
-must be resolved separately before switching its production model.
+Empty model names and unreadable image headers return a counting error.
+Completion and streaming keep their existing provider-owned validation and never
+depend on local image counting rules. The estimate is neither billing usage nor
+a context-window guarantee; exact-count callers must reject it. Direct OpenAI
+counting remains unsupported. This is a framework provider integration, not a
+complete migration for an application whose history fitting, explicit count API
+or rate admission requires exact token counts. Those application contracts must
+be resolved separately before switching its production model.
 
 The provider contract follows the [official Go SDK Bedrock
 configuration](https://github.com/openai/openai-go/blob/v3.56.0/bedrock/bedrock.go),

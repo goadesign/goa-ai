@@ -604,7 +604,8 @@ func providerErrorFromSDK(operation string, err error) error {
 			}
 			code = envelope.Error.Code
 			msg = envelope.Error.Message
-			if envelope.Error.Type == openAIServerError && code == "internal_server_error" {
+			if envelope.Error.Type == openAIServerError &&
+				(code == "internal_server_error" || code == "service_unavailable") {
 				if msg == "" {
 					msg = err.Error()
 				}
