@@ -3,6 +3,8 @@
 package dsl
 
 import (
+	"strings"
+
 	exprmcp "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -79,6 +81,37 @@ func DynamicTools() {
 		return
 	}
 	server.DynamicTools = true
+}
+
+// ServerInstructions sets the instructions that the MCP server returns during
+// discovery. Clients may add them to the system prompt of the model, so they
+// should say what the server is for and when to use its tools, without
+// repeating the tool descriptions. The text is written into the generated
+// server and does not change at run time.
+//
+// ServerInstructions must appear inside MCP's design function, at most once,
+// with a text that is not empty.
+//
+// Example:
+//
+//	MCP("notes", "1.0.0", func() {
+//	    ServerInstructions("Search the notes before answering a question that may depend on them.")
+//	})
+func ServerInstructions(text string) {
+	server, ok := eval.Current().(*exprmcp.MCPExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		eval.ReportError("ServerInstructions requires a text that is not empty")
+		return
+	}
+	if server.Instructions != "" {
+		eval.ReportError("an MCP service can declare only one set of server instructions")
+		return
+	}
+	server.Instructions = text
 }
 
 // Resource marks the current method as an MCP resource provider. The method's

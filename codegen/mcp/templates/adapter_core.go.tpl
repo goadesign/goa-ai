@@ -176,6 +176,9 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs
         Meta: resultMeta(),
         SupportedVersions: []string{mcpruntime.ProtocolVersion, mcpruntime.LegacyProtocolVersion},
         Capabilities: capabilities,
+        {{- if .Instructions }}
+        Instructions: stringPtr({{ quote .Instructions }}),
+        {{- end }}
         TTLMs: 0,
         CacheScope: "private",
     }, nil

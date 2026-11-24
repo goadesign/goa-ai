@@ -546,6 +546,7 @@ Per the MCP JSON-RPC 2.0 specification, inbound JSON-RPC **notifications** (mess
 | DSL Function | Scope | Purpose |
 | :--- | :--- | :--- |
 | `MCP(name, version, opts...)` | `Service` | Enables MCP for the service with server name, semver version, and protocol version (`ProtocolVersion`). |
+| `ServerInstructions(text)` | `MCP` | Declares guidance on using the server, returned as `instructions` during discovery; clients may add it to the model's system prompt. |
 | `MCPTool(name, description, fn)` / `Tool(...)` | `Method` / `Toolset` | Exposes a service method as an MCP tool with generated input/output JSON Schemas. |
 | `ToolTitle(title)`, `ReadOnlyHint(b)`, `DestructiveHint(b)`, `IdempotentHint(b)`, `OpenWorldHint(b)` | `Tool` (`dsl/mcp_annotations.go`) | Attaches MCP behavioral annotations (`annotations`) to the advertised tool descriptor. |
 | `ToolContent(fn)` | `Method` / `Tool` (`dsl/tool_content.go`) | Maps fields of the method's result type to rich MCP content blocks (`Text`, `Image`, `Audio`, `ResourceLink`, `EmbeddedResource`). |
