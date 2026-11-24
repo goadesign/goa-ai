@@ -32,7 +32,16 @@ func TestBedrockImageCountFormats(t *testing.T) {
 	// This complete one-pixel lossless WebP decodes through x/image/webp.
 	webpBytes, err := base64.StdEncoding.DecodeString("UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=")
 	require.NoError(t, err)
-	for _, modelID := range []string{"global.openai.gpt-5.6-sol", "global.openai.gpt-5.6-terra", "global.openai.gpt-5.6-luna", "global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+	for _, modelID := range []string{
+		"global.openai.gpt-5.6-sol",
+		"global.openai.gpt-5.6-terra",
+		"global.openai.gpt-5.6-luna",
+		"global.openai.gpt-6-sol",
+		"global.openai.gpt-6.1-sol",
+		"global.openai.gpt-6.1-terra",
+		"global.openai.gpt-6.2-sol",
+		"global.openai.future-vision-model",
+	} {
 		t.Run(modelID, func(t *testing.T) {
 			for _, test := range []struct {
 				name string
@@ -93,15 +102,23 @@ func TestBedrockImageCountDimensionsAndPerImageLimits(t *testing.T) {
 	}
 }
 
-// Sol estimates do not claim another model's hard image limits.
-func TestBedrockSolImageEstimateDoesNotImposeGPT56Limits(t *testing.T) {
+// Non-GPT-5.6 models default to the patch estimate without claiming GPT-5.6's
+// hard image limits.
+func TestBedrockDefaultImageEstimateDoesNotImposeGPT56Limits(t *testing.T) {
 	var encoded bytes.Buffer
 	require.NoError(t, png.Encode(&encoded, image.NewGray(image.Rect(0, 0, 1, 1))))
 	header := encoded.Bytes()
 	binary.BigEndian.PutUint32(header[16:20], 65536)
 	binary.BigEndian.PutUint32(header[20:24], 512)
 	binary.BigEndian.PutUint32(header[29:33], crc32.ChecksumIEEE(header[12:29]))
-	for _, modelID := range []string{"global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+	for _, modelID := range []string{
+		"global.openai.gpt-6-sol",
+		"global.openai.gpt-6.1-sol",
+		"global.openai.gpt-6.1-terra",
+		"global.openai.gpt-6.2-sol",
+		"global.openai.future-vision-model",
+		"future-vision-model",
+	} {
 		t.Run(modelID, func(t *testing.T) {
 			count, err := bedrockImageTokenCount(modelID, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(header))
 			require.NoError(t, err)
@@ -155,29 +172,48 @@ func TestBedrockImageCountExactDimensionFit(t *testing.T) {
 	}
 }
 
-func TestBedrockImageCountCapabilityAndMalformedImage(t *testing.T) {
-	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra", "global.openai.gpt-6-sol", "us.openai.gpt-6-sol", "openai.gpt-6-sol", "gpt-6-sol", "global.openai.gpt-6.1-sol", "us.openai.gpt-6.1-sol", "us-gov.openai.gpt-6.1-sol", "openai.gpt-6.1-sol", "gpt-6.1-sol"} {
+func TestBedrockImageCountDefaultPolicyAndMalformedImage(t *testing.T) {
+	for _, modelID := range []string{
+		"global.openai.gpt-5.6-terra",
+		"us.openai.gpt-5.6-sol",
+		"us-gov.openai.gpt-5.6-luna",
+		"openai.gpt-5.6-terra",
+		"gpt-5.6-terra",
+		"global.openai.gpt-6-sol",
+		"global.openai.gpt-6.1-sol",
+		"global.openai.gpt-6.1-terra",
+		"global.openai.gpt-6.2-sol",
+		"us.openai.gpt-6.2-sol",
+		"us-gov.openai.gpt-6.2-sol",
+		"openai.gpt-6.2-sol",
+		"gpt-6.2-sol",
+		"future-model",
+	} {
 		_, err := bedrockImageTokenCount(modelID, "data:image/jpeg;base64,invalid")
 		require.ErrorContains(t, err, "decode image dimensions")
 	}
-	_, err := bedrockImageTokenCount("unrecognized-model", "data:image/jpeg;base64,invalid")
-	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
-	_, err = bedrockImageTokenCount(bedrockTestModel, "invalid")
+	for _, emptyModelID := range []string{"", "openai.", "global.openai."} {
+		_, err := bedrockImageTokenCount(emptyModelID, "data:image/jpeg;base64,invalid")
+		require.ErrorContains(t, err, "requires a model ID")
+	}
+	_, err := bedrockImageTokenCount(bedrockTestModel, "invalid")
 	require.ErrorContains(t, err, "requires an encoded image data URL")
-	raw, err := newProvider(Options{DefaultModel: "unrecognized-model", ThinkingEffort: "medium", transport: &mockTransport{}}, true)
+	var picture bytes.Buffer
+	require.NoError(t, png.Encode(&picture, image.NewGray(image.Rect(0, 0, 33, 33))))
+	raw, err := newProvider(Options{DefaultModel: "future-vision-model", ThinkingEffort: "medium", transport: &mockTransport{}}, true)
 	require.NoError(t, err)
 	request := bedrockTestRequest()
+	request.Messages[1].Parts = append(request.Messages[1].Parts, model.ImagePart{Format: model.ImageFormatPNG, Bytes: picture.Bytes()})
 	counter := &bedrockProvider{provider: raw}
-	_, err = counter.CountTokens(t.Context(), request)
-	require.NoError(t, err, "text-only counting does not require an image rule")
-	request.Messages[1].Parts = append(request.Messages[1].Parts, model.ImagePart{Format: model.ImageFormatJPEG, Bytes: []byte("provider-owned-image")})
-	_, err = counter.CountTokens(t.Context(), request)
-	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
+	counted, err := counter.CountTokens(t.Context(), request)
+	require.NoError(t, err, "new Bedrock Responses models use the default patch estimate")
+	assert.False(t, counted.Exact)
+	assert.Greater(t, counted.InputTokens, 500)
 	prepared, err := raw.prepareRequest(request)
-	require.NoError(t, err, "inference preparation does not decode images or require an image count rule")
+	require.NoError(t, err, "inference preparation preserves exact image bytes for provider validation")
 	body, err := json.Marshal(prepared.request)
 	require.NoError(t, err)
-	assert.Contains(t, string(body), base64.StdEncoding.EncodeToString([]byte("provider-owned-image")))
+	assert.Contains(t, string(body), base64.StdEncoding.EncodeToString(picture.Bytes()))
 }
 
 // Function-output media shares the per-image estimate used for user images.

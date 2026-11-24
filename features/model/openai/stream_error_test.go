@@ -35,8 +35,11 @@ func TestNestedStreamErrorMetadata(t *testing.T) {
 		retryable           bool
 	}{
 		{"server", `{"error":{"type":"server_error","code":"internal_server_error","message":"Synthetic failure."}}`, "internal_server_error", model.ProviderErrorKindUnavailable, true},
+		{"service_unavailable", `{"error":{"type":"server_error","code":"service_unavailable","message":"Synthetic failure."}}`, "service_unavailable", model.ProviderErrorKindUnavailable, true},
 		{"conflicting_type", `{"error":{"type":"invalid_request_error","code":"internal_server_error","message":"Synthetic failure."}}`, "internal_server_error", model.ProviderErrorKindUnknown, false},
+		{"service_unavailable_conflicting_type", `{"error":{"type":"invalid_request_error","code":"service_unavailable","message":"Synthetic failure."}}`, "service_unavailable", model.ProviderErrorKindUnknown, false},
 		{"missing_type", `{"error":{"code":"internal_server_error","message":"Synthetic failure."}}`, "internal_server_error", model.ProviderErrorKindUnknown, false},
+		{"service_unavailable_missing_type", `{"error":{"code":"service_unavailable","message":"Synthetic failure."}}`, "service_unavailable", model.ProviderErrorKindUnknown, false},
 		{"unknown", `{"error":{"type":"server_error","code":"new_code","message":"Synthetic failure."}}`, "new_code", model.ProviderErrorKindUnknown, false},
 		{"invalid", `{"error":{"type":"invalid_request_error","code":"invalid_prompt","message":"Synthetic failure."}}`, "invalid_prompt", model.ProviderErrorKindInvalidRequest, false},
 		{"auth", `{"error":{"type":"authentication_error","code":"invalid_api_key","message":"Synthetic failure."}}`, "invalid_api_key", model.ProviderErrorKindInvalidRequest, false},
@@ -113,6 +116,7 @@ func TestNestedStreamErrorAbsenceAndStrictStrings(t *testing.T) {
 		retryable                   bool
 	}{
 		{"message_missing", `"type":"server_error","code":"internal_server_error"`, "internal_server_error", "", true},
+		{"service_unavailable_message_missing", `"type":"server_error","code":"service_unavailable"`, "service_unavailable", "", true},
 		{"message_null", `"type":"server_error","code":"internal_server_error","message":null`, "internal_server_error", "", true},
 		{"message_empty", `"type":"server_error","code":"internal_server_error","message":""`, "internal_server_error", "", true},
 		{"type_missing", `"code":"internal_server_error","message":"Failure."`, "internal_server_error", "Failure.", false},
@@ -209,6 +213,7 @@ func TestStreamErrorPreservesCancellationAndFlatClassification(t *testing.T) {
 		retryable bool
 	}{
 		{"internal_server_error", model.ProviderErrorKindUnknown, false},
+		{"service_unavailable", model.ProviderErrorKindUnknown, false},
 		{"server_error", model.ProviderErrorKindUnavailable, true},
 		{"rate_limit_exceeded", model.ProviderErrorKindRateLimited, true},
 		{"invalid_prompt", model.ProviderErrorKindInvalidRequest, false},

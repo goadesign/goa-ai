@@ -15,8 +15,6 @@ import (
 
 	"github.com/openai/openai-go/v3/packages/param"
 	_ "golang.org/x/image/webp" // Register WebP header decoding for image token counting.
-
-	"goa.design/goa-ai/runtime/agent/model"
 )
 
 // bedrockImageTokens counts images in user messages and correlated function
@@ -58,22 +56,24 @@ func bedrockImageTokens(prepared *preparedRequest) (int, error) {
 // bedrockImageTokenCount estimates image tokens from 32-pixel patches with a
 // 1.2 multiplier. GPT-5.6 additionally applies its documented dimension and
 // patch limits (https://developers.openai.com/api/docs/guides/images-vision).
-// For GPT-6 Sol and GPT-6.1 Sol this is a local estimate, not a billing formula or an
-// assertion about provider image limits. Response usage owns accounting.
+// All other Bedrock Responses models default to the unclipped local patch
+// estimate, which is neither a billing formula nor an assertion about provider
+// image limits. Response usage owns accounting.
 func bedrockImageTokenCount(modelID, dataURL string) (int, error) {
 	_, name, found := strings.Cut(modelID, ".openai.")
 	if !found {
 		name = strings.TrimPrefix(modelID, "openai.")
 	}
-	// Only GPT-5.6 applies documented image limits. The two supported Sol 6
-	// models use the declared estimate and leave image acceptance to the provider.
+	if name == "" {
+		return 0, fmt.Errorf("openai: image token counting requires a model ID")
+	}
+	// Only GPT-5.6 applies documented image limits. Newer and unrecognized
+	// models default to the declared patch estimate and leave image acceptance
+	// to the provider.
 	applyImageLimits := false
 	switch name {
 	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
 		applyImageLimits = true
-	case "gpt-6-sol", "gpt-6.1-sol":
-	default:
-		return 0, fmt.Errorf("openai: image token counting for model %q: %w", modelID, model.ErrTokenCountingUnsupported)
 	}
 	_, encoded, found := strings.Cut(dataURL, ",")
 	if !found {

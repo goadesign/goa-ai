@@ -36,8 +36,8 @@ var _ model.TokenCounter = (*bedrockProvider)(nil)
 // Unary StructuredOutput uses the shared strict schema compiler and validates
 // returned JSON against the caller's original schema. Streaming StructuredOutput
 // and cache-bearing requests are rejected before inference.
-// CountTokens estimates prepared request bytes plus supported model image
-// tokens locally with Exact=false.
+// CountTokens estimates prepared request bytes plus image tokens locally with
+// Exact=false.
 // This approximation is neither a native token count nor a guaranteed upper bound;
 // callers that require exact counting must reject it.
 // Model IDs and logical model classes are configured through opts as usual.
@@ -112,8 +112,10 @@ func newBedrockProvider(ctx context.Context, region string, credentials aws.Cred
 // including encrypted reasoning and tool schemas, without sending HTTP. Its
 // estimate is serialized non-image bytes divided by three (rounded up), plus
 // image tokens derived from dimensions and 500 tokens for framing. Image counting
-// supports explicit model families; it is not billing data or a hard context
-// guarantee. Text and opaque reasoning use a byte-size approximation.
+// uses GPT-5.6's documented dimension and patch limits for GPT-5.6 models and
+// defaults other models to the 32-pixel patch estimate; it is not billing data
+// or a hard context guarantee. Text and opaque reasoning use a byte-size
+// approximation.
 func (c *bedrockProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	if err := ctx.Err(); err != nil {
 		return model.TokenCount{}, err
