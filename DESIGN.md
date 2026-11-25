@@ -645,7 +645,7 @@ var _ = Service("assistant", func() {
 ## Security considerations
 
 - **Single-Edge Authorization and Context Propagation**: Validate OAuth bearer tokens, session ownership, and principal privileges at the HTTP/gRPC ingress boundary before calling `StartRun` or `PrepareContinuation`. Pass verified identity and scope identifiers via `run.Context` (`Inject`) or `ConsumerInputResolver` (`BindInput`) so the model can never forge tenant or account identifiers in tool arguments.
-- **Strict Schema and Boundary Rejection**: Never sanitize, coerce, or heuristically rewrite malformed model tool calls. Generated JSON Schemas and Goa codecs reject unknown fields, invalid enum variants, and out-of-range numbers at the boundary before any domain service method is invoked.
+- **Strict Schema and Boundary Rejection**: Never sanitize, coerce, or heuristically rewrite malformed model tool calls. Generated JSON Schemas and Goa codecs reject unknown fields, invalid enum variants, and out-of-range numbers at the boundary before any domain service method is invoked. For an overlong string, correction guidance names the advertised field and includes the schema's maximum, not the submitted string.
 - **Confirmation Gates for Mutating Tools**: Any tool that modifies external state or dispatches irreversible commands should declare a `Confirmation` block so the workflow suspends (`goa-ai.run-suspension.v14`) and requires an explicit, authenticated user `ProvideConfirmation` call bound to the exact checkpointed payload.
 
 ### Private OAuth credential storage

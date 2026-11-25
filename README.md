@@ -180,9 +180,10 @@ service wiring, and connecting a model. For MCP, follow the
   and validate field references against typed `Args` at generation time. Compose
   sub-prompts via `{{ render "<prompt_id>" . }}` and manage scoped overrides
   dynamically with exact-scope reset and OpenTelemetry model span tracing.
-- **Correction of invalid tool calls.** Missing fields, wrong types, and invalid
-  values receive specific feedback and authored examples. The runtime can ask
-  the model for a replacement within your recovery budget, before execution.
+- **Correction of invalid tool calls.** Missing fields, wrong types, and
+  overlong strings can receive field-specific feedback and authored examples.
+  The runtime can ask the model for a replacement within your recovery budget,
+  before execution.
 - **Specialist agents.** Expose agents as tools and compose real child runs with
   linked progress and cancellation. Cancellation preserves completed results
   and waits for required cleanup before closing the run; cleanup failures remain errors.

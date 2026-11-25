@@ -2083,8 +2083,8 @@ recovery limit. A decoder rejection is eligible only when it returns a non-nil
 `*tools.ValidationError`,
 the typed error generated decoders use for invalid model-authored fields.
 For a tool specification with field metadata, a schema rejection may identify
-several advertised field paths and their required, JSON type, enum, or
-array-length rules. Generated tool and completion specifications include this
+several advertised field paths and their required, JSON type, enum, array-length,
+or maximum string-length rules. Generated tool and completion specifications include this
 metadata; callers that construct a `ToolSpec` directly may include it too.
 The runtime gathers independently required constraints, including `allOf`, but
 does not treat alternative `anyOf` branches, array `contains` candidates, or
@@ -2119,6 +2119,10 @@ Array-length guidance uses the validator's inclusive minimum or maximum for
 that one array, such as `Field "items" must contain at most 3 items.` Generated
 metadata must identify the field as an array. Guidance does not split, truncate,
 or rewrite submitted arguments; the original validation error remains available.
+
+Maximum string-length guidance uses the validator's character limit for that
+advertised string field, such as `Field "tasks.*.quote" must contain at most 400 characters.`
+It does not include the rejected string or a concrete array index.
 
 For each eligible rejection, the model client appends the tool's complete,
 validated input example after the existing field guidance, with an instruction

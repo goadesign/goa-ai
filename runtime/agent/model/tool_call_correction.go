@@ -291,6 +291,14 @@ func toolCorrectionCandidatesForError(
 		}
 		candidate.constraint = fmt.Sprintf("must contain a JSON %s.", candidate.field.JSONType)
 		return []toolCorrectionCandidate{candidate}
+	case *kind.MaxLength:
+		candidate := toolCorrectionCandidateForPath(err.InstanceLocation, "", input, fields)
+		if candidate.unsupported || candidate.field.JSONType != "string" {
+			candidate.unsupported = true
+			return []toolCorrectionCandidate{candidate}
+		}
+		candidate.constraint = fmt.Sprintf("must contain at most %d characters.", failure.Want)
+		return []toolCorrectionCandidate{candidate}
 	case *kind.MinItems:
 		candidate := toolCorrectionCandidateForPath(err.InstanceLocation, "", input, fields)
 		if candidate.unsupported || candidate.field.JSONType != jsonArrayType {
