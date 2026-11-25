@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestMaxStringLengthCorrection(t *testing.T) {
@@ -43,7 +45,8 @@ func TestMaxStringLengthCorrection(t *testing.T) {
 		{"sentence boundary", fmt.Sprintf(`{"sentence":%q}`, strings.Repeat("x", 240)), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			checkArrayCorrection(t, def, tc.payload, tc.expected)
+			rejected := checkArrayCorrection(t, def, tc.payload, tc.expected)
+			assert.Equal(t, tc.expected == "", rejected == nil)
 		})
 	}
 }

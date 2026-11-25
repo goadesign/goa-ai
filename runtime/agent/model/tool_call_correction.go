@@ -26,6 +26,7 @@ import (
 const (
 	advertisedToolInputCorrection    = "The previous tool call did not match its advertised input schema."
 	jsonArrayType                    = "array"
+	jsonStringType                   = "string"
 	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Tool arguments must be one JSON object matching the advertised input schema."
 )
 
@@ -215,7 +216,7 @@ func unionToolCorrectionCandidates(
 	// A missing child property is meaningful only inside an object. Keep the
 	// existing validator feedback when the union value itself has another type.
 	container, _ := jsonValueAt(input, err.InstanceLocation)
-	if _, object := container.(map[string]any); !object || selected.field.JSONType != "string" {
+	if _, object := container.(map[string]any); !object || selected.field.JSONType != jsonStringType {
 		return unsupported
 	}
 	values, marshalErr := json.Marshal(selected.field.DiscriminatorValues)
@@ -293,7 +294,7 @@ func toolCorrectionCandidatesForError(
 		return []toolCorrectionCandidate{candidate}
 	case *kind.MaxLength:
 		candidate := toolCorrectionCandidateForPath(err.InstanceLocation, "", input, fields)
-		if candidate.unsupported || candidate.field.JSONType != "string" {
+		if candidate.unsupported || candidate.field.JSONType != jsonStringType {
 			candidate.unsupported = true
 			return []toolCorrectionCandidate{candidate}
 		}
@@ -469,7 +470,7 @@ func unionBranchesMatch(match fieldPathMatch, input any) bool {
 			var kind string
 			switch value.(type) {
 			case string:
-				kind = "string"
+				kind = jsonStringType
 			case json.Number:
 				kind = "number"
 			case bool:
